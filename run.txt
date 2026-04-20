@@ -1,0 +1,23 @@
+A. Main Backend (Node.js)
+cd CATEGORIZATION/kaif/backend/
+npm install
+npm run dev
+
+B. ML Microservice (Python)
+cd ml-service
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python3 main.py
+
+C. Parser Backend (Python)
+cd CATEGORIZATION/kaif/parser_backend/
+python3.12 -m venv .venv
+source .venv/bin/activate  # Linux/macOS specific
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+
+D. Web Frontend (React)
+cd CATEGORIZATION/kaif/frontend-web/
+npm install
+npm run dev

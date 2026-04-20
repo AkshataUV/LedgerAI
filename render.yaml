@@ -1,0 +1,55 @@
+services:
+  # ─────────────────────────────────────────
+  # Backend (Node.js Express)
+  # ML Service hosted on Hugging Face Spaces
+  # ─────────────────────────────────────────
+  - type: web
+    name: ledgerai-backend
+    runtime: node
+    rootDir: backend
+    branch: main
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        value: google/gemini-2.5-flash
+      - key: ML_SERVICE_URL
+        value: https://mohammadkaifuv-ledgerai-ml.hf.space
+      - key: ALLOWED_ORIGINS
+        sync: false
+
+  # ─────────────────────────────────────────
+  # Frontend (React + Vite → Static Site)
+  # ─────────────────────────────────────────
+  - type: web
+    name: ledgerai-frontend
+    runtime: static
+    rootDir: frontend-web
+    branch: main
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: VITE_API_BASE_URL
+        fromService:
+          name: ledgerai-backend
+          type: web
+          property: host
