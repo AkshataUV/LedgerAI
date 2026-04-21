@@ -206,6 +206,11 @@ const Transactions = () => {
   const [correctingId, setCorrectingId] = useState(null);
   const [cachedAccounts, setCachedAccounts] = useState([]);
 
+  // ── Pipeline processing state — documents being auto-categorised ————————
+  const [processingDocIds, setProcessingDocIds] = useState(new Set());
+  const [failedDocIds, setFailedDocIds] = useState(new Set());
+  const [retrying, setRetrying] = useState(false);
+
   // ── Similar transactions popup state ────────────────────────────
   const [similarTxns, setSimilarTxns] = useState([]);
   const [similarSuggestedAccount, setSimilarSuggestedAccount] = useState(null);
@@ -328,7 +333,7 @@ const Transactions = () => {
           credit,
           document_id,
           account_id,
-          merchant_group_id,
+          group_id,
           source_account:account_id ( account_id, account_name ),
           source_document:document_id ( document_id, file_name ),
           transactions!uncategorized_transaction_id (
@@ -350,6 +355,43 @@ const Transactions = () => {
       if (error) throw error;
 
       setTransactions(data || []);
+
+      // ── Check which documents are still being processed by the auto-pipeline
+      const docIds = [...new Set((data || []).map(t => t.document_id).filter(Boolean))];
+      if (docIds.length > 0) {
+        const { data: docStatuses } = await supabase
+          .from('documents')
+          .select('document_id, grouping_status, pipeline_started_at')
+          .in('document_id', docIds);
+
+        const PIPELINE_TIMEOUT_MS = 5 * 60 * 1000;
+        const stillProcessing = new Set();
+        const failed = new Set();
+
+        for (const doc of docStatuses || []) {
+          if (doc.grouping_status === 'pipeline_done') continue;
+          if (doc.grouping_status === 'pipeline_failed') {
+            failed.add(doc.document_id);
+            continue;
+          }
+          // Stale pipeline_running check
+          if (
+            doc.grouping_status === 'pipeline_running' &&
+            doc.pipeline_started_at &&
+            Date.now() - new Date(doc.pipeline_started_at).getTime() > PIPELINE_TIMEOUT_MS
+          ) {
+            failed.add(doc.document_id);
+            continue;
+          }
+          stillProcessing.add(doc.document_id);
+        }
+
+        setProcessingDocIds(stillProcessing);
+        setFailedDocIds(failed);
+      } else {
+        setProcessingDocIds(new Set());
+        setFailedDocIds(new Set());
+      }
 
       // Auto-select LOW attention when filtering to PENDING_APP
       if (currentFilter === 'PENDING_APP') {
@@ -436,6 +478,50 @@ const Transactions = () => {
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, []);
+
+  // ── Poll documents table while any are still being pipeline-processed ——————
+  useEffect(() => {
+    if (processingDocIds.size === 0) return;
+
+    const interval = setInterval(async () => {
+      const { data: docStatuses } = await supabase
+        .from('documents')
+        .select('document_id, grouping_status, pipeline_started_at')
+        .in('document_id', [...processingDocIds]);
+
+      const PIPELINE_TIMEOUT_MS = 5 * 60 * 1000;
+      const stillProcessing = new Set();
+      const failed = new Set();
+
+      for (const doc of docStatuses || []) {
+        if (doc.grouping_status === 'pipeline_done') continue;
+        if (doc.grouping_status === 'pipeline_failed') {
+          failed.add(doc.document_id);
+          continue;
+        }
+        if (
+          doc.grouping_status === 'pipeline_running' &&
+          doc.pipeline_started_at &&
+          Date.now() - new Date(doc.pipeline_started_at).getTime() > PIPELINE_TIMEOUT_MS
+        ) {
+          failed.add(doc.document_id);
+          continue;
+        }
+        stillProcessing.add(doc.document_id);
+      }
+
+      setProcessingDocIds(stillProcessing);
+      setFailedDocIds(prev => new Set([...prev, ...failed]));
+
+      if (stillProcessing.size === 0) {
+        clearInterval(interval);
+        fetchTransactions(activeFilter, true); // silent refresh to show new rows
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [processingDocIds]);
 
   // Close popups on outside click
   useEffect(() => {
@@ -532,6 +618,38 @@ const Transactions = () => {
     ));
   };
 
+  // ── Returns true when the document for this row is still being auto-processed ──
+  const isRowProcessing = (txn) => processingDocIds.has(txn.document_id);
+  // ── Returns true when the document for this row has a pipeline failure ───────
+  const isRowFailed = (txn) => failedDocIds.has(txn.document_id);
+
+  // ── Retry handler: re-triggers pipeline for every failed document ──────────
+  const handleRetryPipeline = async () => {
+    setRetrying(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      for (const docId of failedDocIds) {
+        await fetch(`${API_BASE_URL}/api/transactions/retry-pipeline`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ document_id: docId }),
+        });
+      }
+      // Move failed docs back into the processing bucket so polling resumes
+      setProcessingDocIds(prev => new Set([...prev, ...failedDocIds]));
+      setFailedDocIds(new Set());
+    } catch (err) {
+      console.error('Retry pipeline failed:', err);
+      showToast('Failed to retry pipeline. Please try again.', 'error');
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   const handleCategorize = async () => {
     const uncategorizedItems = transactions.filter(
       txn => !(txn.transactions && txn.transactions.length > 0)
@@ -554,7 +672,9 @@ const Transactions = () => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session?.access_token || ''}`
         },
-        body: JSON.stringify({ transactions: uncategorizedItems })
+        body: JSON.stringify({ 
+          document_ids: [...new Set(uncategorizedItems.map(t => t.document_id))] 
+        })
       });
 
       const reader = response.body.getReader();
@@ -1045,13 +1165,13 @@ const Transactions = () => {
    *   1. Sort by attention_level HIGH→MEDIUM→LOW
    *   2. Within same level, sort by txn_date ascending
    *   3. Walk the sorted list; when a txn is first encountered, immediately
-   *      pull in all its remaining siblings (same merchant_group_id) so they
+   *      pull in all its remaining siblings (same group_id) so they
    *      appear consecutively. The "stored index" (position in the primary
    *      sorted list) is only advanced after the full sibling group is done.
    *
    * UNCATEGORISED rows (no transactions row at all):
    *   1. Sort by txn_date ascending
-   *   2. Within the same date, group by merchant_group_id
+   *   2. Within the same date, group by group_id
    *
    * Categorised rows come before uncategorised rows in the final queue.
    */
@@ -1092,11 +1212,11 @@ const Transactions = () => {
       catResult.push(txn);
       catSeen.add(txn.uncategorized_transaction_id);
       // Pull remaining siblings before advancing i
-      if (txn.merchant_group_id) {
+      if (txn.group_id) {
         for (let j = i + 1; j < categorised.length; j++) {
           const sib = categorised[j];
           if (
-            sib.merchant_group_id === txn.merchant_group_id &&
+            sib.group_id === txn.group_id &&
             !catSeen.has(sib.uncategorized_transaction_id)
           ) {
             catResult.push(sib);
@@ -1107,14 +1227,14 @@ const Transactions = () => {
       // i increments naturally — siblings already in catSeen are skipped by the guard above
     }
 
-    // ── UNCATEGORISED: txn_date → merchant_group_id (within same date) ───────
+    // ── UNCATEGORISED: txn_date → group_id (within same date) ───────
     uncategorised.sort((a, b) => {
       const dateD =
         new Date(a.txn_date).getTime() - new Date(b.txn_date).getTime();
       if (dateD !== 0) return dateD;
       // Within the same date, group siblings together
-      const aGrp = a.merchant_group_id || '';
-      const bGrp = b.merchant_group_id || '';
+      const aGrp = a.group_id || '';
+      const bGrp = b.group_id || '';
       return aGrp.localeCompare(bGrp);
     });
 
@@ -1452,13 +1572,13 @@ const Transactions = () => {
       // Skip and Save & Skip never reach this path.
       const nextCard = reviewQueue[reviewIndex + 1];
       const hasSiblingNext = !!(nextCard
-        && nextCard.merchant_group_id
-        && nextCard.merchant_group_id === current.merchant_group_id);
+        && nextCard.group_id
+        && nextCard.group_id === current.group_id);
 
       console.log('[Review] Sibling pre-fill check:', {
         approvedUncatId: uncatId,
-        approvedGroup: current.merchant_group_id,
-        nextCardGroup: nextCard?.merchant_group_id,
+        approvedGroup: current.group_id,
+        nextCardGroup: nextCard?.group_id,
         hasSiblingNext,
         queueLength: reviewQueue.length,
         reviewIndex
@@ -1707,7 +1827,8 @@ const Transactions = () => {
               id="transactions-categorize-btn"
               className={`action-btn ${isCategorizing ? 'categorising' : ''}`}
               onClick={handleCategorize}
-              disabled={isCategorizing}
+              disabled={isCategorizing || processingDocIds.size > 0}
+              title={processingDocIds.size > 0 ? 'Please wait, transactions are still being processed' : ''}
               style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
             >
               {isCategorizing
@@ -1718,6 +1839,34 @@ const Transactions = () => {
           )}
         </div>
       </div>
+
+      {/* ── Pipeline processing banner — sits above the tab bar ——————————— */}
+      {processingDocIds.size > 0 && (
+        <div className="pipeline-processing-banner">
+          <span className="pipeline-spinner" />
+          <span>
+            Processing {processingDocIds.size} document{processingDocIds.size > 1 ? 's' : ''}…
+            transactions will update automatically.
+          </span>
+        </div>
+      )}
+
+      {/* ── Pipeline error banner ————————————————————————————————— */}
+      {failedDocIds.size > 0 && (
+        <div className="pipeline-error-banner">
+          <span className="pipeline-error-icon">⚠</span>
+          <span>
+            {failedDocIds.size} document{failedDocIds.size > 1 ? 's' : ''} failed to process.
+          </span>
+          <button
+            className="pipeline-retry-btn"
+            onClick={handleRetryPipeline}
+            disabled={retrying}
+          >
+            {retrying ? 'Retrying…' : 'Retry'}
+          </button>
+        </div>
+      )}
 
       <div id="transactions-tabs" className="filter-tabs">
         <button
@@ -2144,13 +2293,16 @@ const Transactions = () => {
                         </div>
                         <div
                           className={
-                            isCategorised && txn.transactions[0].accounts
-                              ? 'account-cell-clickable'
-                              : isCategorised === false
-                              ? 'account-cell-clickable uncategorised'
-                              : ''
+                            `${
+                              isCategorised && txn.transactions[0].accounts
+                                ? 'account-cell-clickable'
+                                : isCategorised === false
+                                ? 'account-cell-clickable uncategorised'
+                                : ''
+                            }${isRowProcessing(txn) ? ' is-processing' : ''}${isRowFailed(txn) ? ' is-pipeline-failed' : ''}`
                           }
                           onClick={() => {
+                            if (isRowProcessing(txn) || isRowFailed(txn)) return;
                             if (isCategorised && txn.transactions[0].accounts) {
                               setRecatTarget(txn);
                             } else if (!isCategorised) {
@@ -2159,12 +2311,20 @@ const Transactions = () => {
                           }}
                           style={{
                             cursor:
-                              (isCategorised && txn.transactions[0].accounts) || !isCategorised
+                              isRowProcessing(txn) || isRowFailed(txn)
+                                ? 'default'
+                                : (isCategorised && txn.transactions[0].accounts) || !isCategorised
                                 ? 'pointer'
                                 : 'default'
                           }}
+                          title={isRowProcessing(txn) ? 'Auto-categorising…' : isRowFailed(txn) ? 'Pipeline failed — click Retry' : undefined}
                         >
-                          {isCategorised ? accountName : '+ Assign'}
+                          {isRowProcessing(txn)
+                            ? <span className="processing-label">🔒 Processing…</span>
+                            : isRowFailed(txn)
+                            ? <span className="processing-label">⚠ Failed</span>
+                            : isCategorised ? accountName : '+ Assign'
+                          }
                         </div>
                         {activeFilter !== 'PENDING_CAT' && (
                           <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
@@ -2180,7 +2340,19 @@ const Transactions = () => {
                         )}
                         {activeFilter !== 'PENDING_CAT' && activeFilter !== 'APPROVED' && (
                           <div className="actions-cell">
-                            {status === 'PENDING' && isCategorised ? (
+                            {isRowProcessing(txn) ? (
+                              <span className="processing-label" style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                🔒
+                              </span>
+                            ) : isRowFailed(txn) ? (
+                              <span
+                                className="processing-label"
+                                style={{ fontSize: '12px', color: '#F59E0B' }}
+                                title="Pipeline failed — click Retry above"
+                              >
+                                ⚠
+                              </span>
+                            ) : status === 'PENDING' && isCategorised ? (
                               <button
                                 className="action-icon-btn approve"
                                 onClick={() => handleApprove(transactionId, isUncategorised, txn.uncategorized_transaction_id)}

@@ -157,26 +157,26 @@ async function recategorizeTransaction(req, res) {
 
       suggestedAccount = suggestedAccountData || null;
 
-      // ── Priority 0: merchant_group_id matching ──────────────────────────────
+      // ── Priority 0: group_id matching ──────────────────────────────
       // Surface pre-pipeline (uncategorised) group members before falling back
       // to the existing extracted_id and offset_account_id logic.
       // Only runs when the transaction has a linked uncategorized_transaction_id.
       if (updatedTxn.uncategorized_transaction_id) {
         const { data: uncatSource } = await supabase
           .from('uncategorized_transactions')
-          .select('merchant_group_id')
+          .select('group_id')
           .eq('uncategorized_transaction_id', updatedTxn.uncategorized_transaction_id)
           .eq('user_id', userId)
           .maybeSingle();
 
-        const groupId = uncatSource?.merchant_group_id;
+        const groupId = uncatSource?.group_id;
 
         if (groupId) {
           // Fetch all group members still in uncategorized_transactions (not yet pipeline-processed)
           const { data: groupMembers } = await supabase
             .from('uncategorized_transactions')
-            .select('uncategorized_transaction_id, details, txn_date, debit, credit, account_id, merchant_group_id')
-            .eq('merchant_group_id', groupId)
+            .select('uncategorized_transaction_id, details, txn_date, debit, credit, account_id, group_id')
+            .eq('group_id', groupId)
             .eq('user_id', userId)
             .neq('uncategorized_transaction_id', updatedTxn.uncategorized_transaction_id)
             .neq('grouping_status', 'skipped')
@@ -584,10 +584,10 @@ async function manualCategorizeTransaction(req, res) {
       return res.status(400).json({ error: 'Missing uncategorized_transaction_id or offset_account_id.' });
     }
 
-    // Fetch the uncategorized transaction row (include merchant_group_id for Priority 0 similar-txn matching)
+    // Fetch the uncategorized transaction row (include group_id for Priority 0 similar-txn matching)
     const { data: uncatData, error: uncatError } = await supabase
       .from('uncategorized_transactions')
-      .select('account_id, document_id, txn_date, details, debit, credit, merchant_group_id')
+      .select('account_id, document_id, txn_date, details, debit, credit, group_id')
       .eq('uncategorized_transaction_id', uncategorized_transaction_id)
       .eq('user_id', userId)
       .single();
@@ -671,16 +671,16 @@ async function manualCategorizeTransaction(req, res) {
         effectiveExtractedId = rulesResult.extractedId;
       }
 
-      // ── Priority 0: merchant_group_id matching ──────────────────────────────
+      // ── Priority 0: group_id matching ──────────────────────────────
       // Surface pre-pipeline (uncategorised) group members before falling back
       // to the existing extracted_id and offset_account_id logic.
-      const groupId = uncatData.merchant_group_id;
+      const groupId = uncatData.group_id;
 
       if (groupId) {
         const { data: groupMembers } = await supabase
           .from('uncategorized_transactions')
-          .select('uncategorized_transaction_id, details, txn_date, debit, credit, account_id, merchant_group_id')
-          .eq('merchant_group_id', groupId)
+          .select('uncategorized_transaction_id, details, txn_date, debit, credit, account_id, group_id')
+          .eq('group_id', groupId)
           .eq('user_id', userId)
           .neq('uncategorized_transaction_id', uncategorized_transaction_id)
           .neq('grouping_status', 'skipped')
@@ -1139,6 +1139,81 @@ async function manualAddTransaction(req, res) {
   }
 }
 
+
+/**
+ * retryPipeline(req, res)
+ * Re-triggers the auto-pipeline for a document that is in pipeline_failed
+ * state, or pipeline_running but stale (> 5 min since pipeline_started_at).
+ * Route: POST /transactions/retry-pipeline
+ * Body: { document_id }
+ */
+async function retryPipeline(req, res) {
+  try {
+    const { document_id } = req.body;
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'User authentication failed.' });
+    }
+    if (!document_id) {
+      return res.status(400).json({ error: 'Missing document_id.' });
+    }
+
+    // 1. Verify the document belongs to this user
+    const { data: doc, error: docErr } = await supabase
+      .from('documents')
+      .select('document_id, user_id, grouping_status, pipeline_started_at')
+      .eq('document_id', document_id)
+      .eq('user_id', userId)
+      .single();
+
+    if (docErr || !doc) {
+      return res.status(404).json({ error: 'Document not found.' });
+    }
+
+    // 2. Only allow retry when failed OR running-but-stale (> 5 min)
+    const STALE_MS = 5 * 60 * 1000;
+    const isStaleRunning =
+      doc.grouping_status === 'pipeline_running' &&
+      doc.pipeline_started_at &&
+      Date.now() - new Date(doc.pipeline_started_at).getTime() > STALE_MS;
+
+    if (doc.grouping_status !== 'pipeline_failed' && !isStaleRunning) {
+      return res.status(409).json({
+        error: `Cannot retry: document grouping_status is '${doc.grouping_status}'. Only pipeline_failed or stale pipeline_running documents can be retried.`
+      });
+    }
+
+    // 3. Reset document to 'done' so auto-pipeline can pick it up again
+    await supabase
+      .from('documents')
+      .update({
+        grouping_status: 'done',
+        pipeline_error: null,
+        pipeline_started_at: null,
+      })
+      .eq('document_id', document_id);
+
+    // 4. Re-trigger the auto-pipeline (fire-and-forget — same pattern as Python grouping job)
+    const internalUrl = `http://localhost:${process.env.PORT || 3000}/internal/auto-pipeline`;
+    fetch(internalUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.INTERNAL_SECRET}`,
+      },
+      body: JSON.stringify({ document_id, user_id: userId }),
+    }).catch(err =>
+      console.error('[RETRY-PIPELINE] Failed to trigger internal endpoint:', err.message)
+    );
+
+    return res.json({ success: true, message: 'Pipeline retriggered' });
+  } catch (err) {
+    console.error('Unexpected error in retryPipeline:', err);
+    return res.status(500).json({ error: 'Internal server error.' });
+  }
+}
+
 module.exports = {
   recategorizeTransaction,
   approveTransaction,
@@ -1148,4 +1223,5 @@ module.exports = {
   updateSourceAccount,
   updateTransactionNote,
   manualAddTransaction,
+  retryPipeline,
 };

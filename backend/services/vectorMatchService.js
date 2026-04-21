@@ -161,6 +161,96 @@ async function findVectorMatch(cleanString, userId, transactionType) {
   }
 }
 
+/**
+ * findVectorMatchWithEmbedding
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Same waterfall as findVectorMatch() but accepts a pre-computed embedding
+ * array directly — skips the /embed ML call entirely.
+ *
+ * Used by autoPipelineController and bulkController when a staging embedding
+ * is already available from the merchant grouping job.
+ *
+ * @param {number[]} embedding      - Pre-computed float embedding array.
+ * @param {string}   userId         - UUID of the authenticated user.
+ * @param {string}   balanceNature  - 'DEBIT' or 'CREDIT'.
+ * @returns {object|null} { offset_account_id, categorised_by, confidence_score } or null.
+ */
+async function findVectorMatchWithEmbedding(embedding, userId, balanceNature) {
+  try {
+    if (!embedding || !Array.isArray(embedding) || !userId) return null;
+
+    const requiredBalanceNature = balanceNature === 'DEBIT' ? 'DEBIT' : 'CREDIT';
+
+    // ── Stage 3.1: PERSONAL VECTOR CACHE ──────────────────────────────────────
+    const { data: pData, error: pError } = await supabase.rpc('match_personal_vectors', {
+      p_user_id: userId,
+      query_embedding: embedding,
+      match_threshold: 0.35,
+      match_count: 1
+    });
+
+    if (pError) {
+      console.error('❌ findVectorMatchWithEmbedding (Personal) rpc error:', pError);
+    } else if (pData && pData.length > 0) {
+      return {
+        offset_account_id: pData[0].account_id,
+        confidence_score: 1.00,
+        categorised_by: 'P_VEC'
+      };
+    }
+
+    // ── Stage 3.1.5: GLOBAL KEYWORD RULES ────────────────────────────────────
+    // NOTE: Keyword rules match on the clean string, which is encoded inside
+    // the embedding. Without the original text we skip keyword rules here —
+    // they will be picked up by the LLM fallback if still unresolved.
+    // The stage is intentionally a no-op for this embedding-first path.
+
+    // ── Stage 3.2: GLOBAL VECTOR CACHE ───────────────────────────────────────
+    const { data: gData, error: gError } = await supabase.rpc('match_vectors', {
+      query_embedding: embedding,
+      match_threshold: 0.35,
+      match_count: 1
+    });
+
+    if (gError) {
+      console.error('❌ findVectorMatchWithEmbedding (Global) rpc error:', gError);
+      return null;
+    }
+
+    if (gData && gData.length > 0) {
+      const targetTemplateId = gData[0].target_template_id;
+
+      const { data: accData, error: accError } = await supabase
+        .from('accounts')
+        .select('account_id, balance_nature')
+        .eq('user_id', userId)
+        .eq('template_id', targetTemplateId)
+        .eq('is_active', true)
+        .eq('balance_nature', requiredBalanceNature)
+        .limit(1);
+
+      if (accError) return null;
+
+      if (accData && accData.length > 0) {
+        return {
+          offset_account_id: accData[0].account_id,
+          confidence_score: 0.85,
+          categorised_by: 'G_VEC'
+        };
+      }
+
+      console.warn(`⚠️ findVectorMatchWithEmbedding: Global match found but balance_nature mismatch. Required: ${requiredBalanceNature}`);
+    }
+
+    return null;
+
+  } catch (err) {
+    console.error('❌ findVectorMatchWithEmbedding encountered an error:', err.message);
+    return null;
+  }
+}
+
 module.exports = {
-  findVectorMatch
+  findVectorMatch,
+  findVectorMatchWithEmbedding
 };

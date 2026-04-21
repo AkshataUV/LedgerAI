@@ -31,7 +31,8 @@ from db.connection import get_client
 logger = logging.getLogger("ledgerai.merchant_grouping")
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-COSINE_THRESHOLD   = 0.92
+COSINE_THRESHOLD_GROUP  = 0.92
+COSINE_THRESHOLD_PVEC   = 0.35
 EMBED_BATCH_SIZE   = 10
 HISTORY_ROW_LIMIT  = 800
 HISTORY_DAYS       = 90
@@ -215,9 +216,9 @@ def _group_within_batch(embed_txns: list[dict]) -> list[dict]:
     """
     Pairwise cosine comparison within the current document's transactions.
 
-    - Two transactions are in the same group iff similarity >= COSINE_THRESHOLD.
+    - Two transactions are in the same group iff similarity >= COSINE_THRESHOLD_GROUP.
     - Group representative = row with the lowest uncategorized_transaction_id.
-    - Every transaction gets a merchant_group_id (even singletons).
+    - Every transaction gets a group_id (even singletons).
 
     Uses Union-Find for O(n α(n)) grouping.
     """
@@ -247,7 +248,7 @@ def _group_within_batch(embed_txns: list[dict]) -> list[dict]:
             if emb_i is None or emb_j is None:
                 continue
             sim = _cosine_similarity(emb_i, emb_j)
-            if sim >= COSINE_THRESHOLD:
+            if sim >= COSINE_THRESHOLD_GROUP:
                 union(i, j)
 
     # Assign UUIDs: all members of a component share the root's UUID
@@ -256,7 +257,7 @@ def _group_within_batch(embed_txns: list[dict]) -> list[dict]:
         root = find(i)
         if root not in group_uuids:
             group_uuids[root] = str(uuid.uuid4())
-        embed_txns[i]["merchant_group_id"] = group_uuids[root]
+        embed_txns[i]["group_id"] = group_uuids[root]
 
     return embed_txns
 
@@ -347,6 +348,7 @@ def run_merchant_grouping(document_id: int, user_id: str) -> None:
     if not embed_txns:
         logger.info("No transactions require embedding — marking grouping complete")
         _mark_complete(sb, document_id, txns)
+        _trigger_auto_pipeline(document_id, user_id)
         return
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -362,22 +364,28 @@ def run_merchant_grouping(document_id: int, user_id: str) -> None:
         embeddings.extend(_embed_batch(batch))
 
     # Attach embeddings back to transactions and persist
-    embed_update_rows = []
     for txn, emb in zip(embed_txns, embeddings):
         txn["embedding"] = emb
         if emb is not None:
-            embed_update_rows.append({
-                "uncategorized_transaction_id": txn["uncategorized_transaction_id"],
+            cache_row = {
+                "user_id": user_id,
+                "clean_name": txn.get("clean_string", "UNKNOWN").upper(),
                 "embedding": emb,
-            })
-
-    for row in embed_update_rows:
-        (
-            sb.table("uncategorized_transactions")
-            .update({"embedding": row["embedding"]})
-            .eq("uncategorized_transaction_id", row["uncategorized_transaction_id"])
-            .execute()
-        )
+                "status": "staging",
+                "hit_count": 0,
+            }
+            try:
+                result = sb.table("personal_vector_cache").insert(cache_row).execute()
+                if result.data:
+                    cache_id = result.data[0].get("id")
+                    if cache_id:
+                        txn["vector_cache_ref"] = cache_id
+                        sb.table("uncategorized_transactions")\
+                          .update({"vector_cache_ref": cache_id})\
+                          .eq("uncategorized_transaction_id", txn["uncategorized_transaction_id"])\
+                          .execute()
+            except Exception as exc:
+                logger.error("Failed to insert staging cache for '%s': %s", txn.get("clean_string", "")[:60], exc)
 
     embedded_txns = [t for t in embed_txns if t.get("embedding") is not None]
     logger.info("  %d / %d transactions embedded successfully", len(embedded_txns), len(embed_txns))
@@ -392,14 +400,24 @@ def run_merchant_grouping(document_id: int, user_id: str) -> None:
             document_id, _get_ml_service_url(),
         )
         _mark_complete(sb, document_id, txns)
+        _trigger_auto_pipeline(document_id, user_id)
         return
 
     # ──────────────────────────────────────────────────────────────────────────
     # STEP 3 — WITHIN-BATCH GROUPING
     # ──────────────────────────────────────────────────────────────────────────
-    logger.info("[STEP 3] Within-batch cosine grouping (threshold=%.2f)...", COSINE_THRESHOLD)
+    logger.info("[STEP 3] Within-batch cosine grouping (threshold=%.2f)...", COSINE_THRESHOLD_GROUP)
     if embedded_txns:
         embedded_txns = _group_within_batch(embedded_txns)
+        
+        # Persist after Step 3 — before Step 4 can override
+        for txn in embedded_txns:
+            gid = txn.get("group_id")
+            if gid:
+                sb.table("uncategorized_transactions")\
+                  .update({"group_id": gid})\
+                  .eq("uncategorized_transaction_id", txn["uncategorized_transaction_id"])\
+                  .execute()
 
     # ──────────────────────────────────────────────────────────────────────────
     # STEP 4 — CROSS-DOCUMENT GROUPING
@@ -411,59 +429,98 @@ def run_merchant_grouping(document_id: int, user_id: str) -> None:
 
     history_result = (
         sb.table("uncategorized_transactions")
-        .select("uncategorized_transaction_id, embedding, merchant_group_id")
+        .select(
+            "group_id, document_id, created_at, "
+            "personal_vector_cache!vector_cache_ref(embedding, account_id)"
+        )
         .eq("user_id", user_id)
         .neq("document_id", document_id)
-        .not_.is_("embedding", "null")
+        .not_.is_("vector_cache_ref", "null")
         .gte("created_at", cutoff)
+        .eq("personal_vector_cache.status", "staging")
         .limit(HISTORY_ROW_LIMIT)
         .execute()
     )
     historical_rows: list[dict] = history_result.data or []
-    logger.info("  Loaded %d historical rows", len(historical_rows))
 
-    # Find singleton transactions (no within-batch sibling found — all start with same UUID)
-    # Strategy: a singleton is a txn that is its own group representative with no other member.
-    # Since every tx gets a group_id we compare all; cross-doc matching can override any tx.
+    flat_history = []
+    for hist in historical_rows:
+        cache = hist.get("personal_vector_cache") or {}
+        # personal_vector_cache may be returned as a list or a dict depending
+        # on whether Supabase treats the FK as to-one or to-many.
+        if isinstance(cache, list):
+            cache = cache[0] if cache else {}
+        hist_emb = cache.get("embedding")
+        if isinstance(hist_emb, str):
+            import json
+            try:
+                hist_emb = json.loads(hist_emb)
+            except Exception:
+                hist_emb = None
+        if not isinstance(hist_emb, list):
+            continue
+        flat_history.append({
+            "embedding": hist_emb,
+            "account_id": cache.get("account_id"),
+            "group_id": hist.get("group_id"),
+        })
+
+    logger.info("  Loaded %d historical rows", len(flat_history))
+
+
     for txn in embedded_txns:
         txn_emb = txn.get("embedding")
-        if txn_emb is None:
-            continue
-        best_sim = 0.0
-        best_group_id = None
-        for hist in historical_rows:
-            hist_emb = hist.get("embedding")
-            if hist_emb is None:
+        if isinstance(txn_emb, str):
+            import json
+            try:
+                txn_emb = json.loads(txn_emb)
+            except Exception:
                 continue
+        if not isinstance(txn_emb, list):
+            continue
+            
+        best_sim_group = 0.0
+        best_group_id = None
+        
+        best_sim_pvec = 0.0
+        best_pvec_account = None
+        
+        for hist in flat_history:
+            hist_emb = hist.get("embedding")  # already a list[float] — validated on construction
+                
             sim = _cosine_similarity(txn_emb, hist_emb)
-            if sim >= COSINE_THRESHOLD and sim > best_sim:
-                best_sim = sim
-                best_group_id = hist.get("merchant_group_id")
-        if best_group_id:
-            txn["merchant_group_id"] = best_group_id
+            
+            if sim >= COSINE_THRESHOLD_GROUP and sim > best_sim_group:
+                best_sim_group = sim
+                best_group_id = hist.get("group_id")
+                
+            if sim >= COSINE_THRESHOLD_PVEC and sim < COSINE_THRESHOLD_GROUP and sim > best_sim_pvec:
+                acc_id = hist.get("account_id")
+                if acc_id:
+                    best_sim_pvec = sim
+                    best_pvec_account = acc_id
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Persist merchant_group_id for all embedded transactions
-    # ──────────────────────────────────────────────────────────────────────────
-    for txn in embedded_txns:
-        gid = txn.get("merchant_group_id")
-        if gid:
+        if best_group_id:
+            txn["group_id"] = best_group_id
             (
                 sb.table("uncategorized_transactions")
-                .update({"merchant_group_id": gid})
+                .update({"group_id": best_group_id})
                 .eq("uncategorized_transaction_id", txn["uncategorized_transaction_id"])
                 .execute()
             )
+            
+        if best_pvec_account:
+            txn["pvec_hint"] = {"account_id": best_pvec_account, "confidence": best_sim_pvec}
 
     # ──────────────────────────────────────────────────────────────────────────
     # STEP 5 — AUTO-CATEGORISE FROM PERSONAL HISTORY
     # ──────────────────────────────────────────────────────────────────────────
     logger.info("[STEP 5] Auto-categorising via match_personal_vectors...")
 
-    # Group embedded_txns by merchant_group_id
+    # Group embedded_txns by group_id
     groups: dict[str, list[dict]] = {}
     for txn in embedded_txns:
-        gid = txn.get("merchant_group_id")
+        gid = txn.get("group_id")
         if gid:
             groups.setdefault(gid, []).append(txn)
 
@@ -488,15 +545,22 @@ def run_merchant_grouping(document_id: int, user_id: str) -> None:
             ).execute()
         except Exception as exc:
             logger.warning("match_personal_vectors RPC failed for group %s: %s", gid, exc)
-            continue
+            pvec_result = None
 
-        pvec_data: list[dict] = pvec_result.data or []
-        if not pvec_data:
-            continue
+        pvec_data = pvec_result.data if pvec_result else []
+        account_id = None
+        conf_score = 0.0
 
-        match        = pvec_data[0]
-        account_id   = match.get("account_id")
-        conf_score   = match.get("similarity") or match.get("confidence_score") or 0.0
+        if pvec_data:
+            match      = pvec_data[0]
+            account_id = match.get("account_id")
+            conf_score = match.get("similarity") or match.get("confidence_score") or 0.0
+
+        if not account_id:
+            hint = representative.get("pvec_hint")
+            if hint:
+                account_id = hint.get("account_id")
+                conf_score = hint.get("confidence", 0.0)
 
         if not account_id:
             continue
@@ -535,10 +599,77 @@ def run_merchant_grouping(document_id: int, user_id: str) -> None:
 
     logger.info("  Auto-categorised %d transactions total", auto_categorised_count)
 
+    # CHANGE 4: EXACT_THEN_DUMP miss handling
+    exact_dump_txns = strategy_groups.get("EXACT_THEN_DUMP", [])
+    if exact_dump_txns:
+        dump_insert_rows = []
+        for txn in exact_dump_txns:
+            amount = txn.get("debit") or txn.get("credit") or 0
+            txn_type = "DEBIT" if txn.get("debit") else "CREDIT"
+            dump_insert_rows.append({
+                "user_id":                      user_id,
+                "base_account_id":              txn.get("account_id"),
+                "offset_account_id":            None,
+                "document_id":                  document_id,
+                "transaction_date":             txn.get("txn_date"),
+                "details":                      txn.get("details"),
+                "amount":                       amount,
+                "transaction_type":             txn_type,
+                "posting_status":               "DRAFT",
+                "review_status":                "PENDING",
+                "categorised_by":               "UNCATEGORISED",
+                "confidence_score":             0.0,
+                "attention_level":              "HIGH",
+                "is_uncategorised":             True,
+                "uncategorized_transaction_id": txn["uncategorized_transaction_id"],
+            })
+        if dump_insert_rows:
+            try:
+                sb.table("transactions").insert(dump_insert_rows).execute()
+                logger.info("  Dumped %d EXACT_THEN_DUMP transactions to review queue", len(dump_insert_rows))
+            except Exception as exc:
+                logger.error("Failed to insert EXACT_THEN_DUMP rows: %s", exc)
+
     # ──────────────────────────────────────────────────────────────────────────
     # STEP 6 — MARK COMPLETE
     # ──────────────────────────────────────────────────────────────────────────
     _mark_complete(sb, document_id, txns)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # STEP 7 — TRIGGER AUTO-PIPELINE (Node.js Stages 1–3)
+    # Fire-and-check: log response but never raise. Grouping is already done.
+    # ──────────────────────────────────────────────────────────────────────────
+    _trigger_auto_pipeline(document_id, user_id)
+
+
+
+def _trigger_auto_pipeline(document_id: int, user_id: str) -> None:
+    """
+    POST to the Node.js /internal/auto-pipeline endpoint after grouping
+    completes. This triggers Stages 1-3 of the categorisation pipeline
+    (Rules → P_EXACT → Vector) synchronously before marking grouping done
+    from the Node side's perspective.
+
+    Fire-and-check: logs the response but does NOT raise. The grouping job
+    is already complete at this point regardless of the trigger's outcome.
+    """
+    node_url = os.environ.get("NODE_BACKEND_URL", "http://127.0.0.1:3000")
+    secret = os.environ.get("INTERNAL_SECRET", "")
+
+    try:
+        resp = httpx.post(
+            f"{node_url}/internal/auto-pipeline",
+            json={"document_id": document_id, "user_id": user_id},
+            headers={"Authorization": f"Bearer {secret}"},
+            timeout=120.0,  # auto-pipeline can take time for large batches
+        )
+        logger.info(
+            "[AUTO-PIPELINE] Triggered — status=%s response=%s",
+            resp.status_code,
+            resp.text[:200],
+        )
+    except Exception as exc:
+        logger.error("[AUTO-PIPELINE] Failed to trigger: %s", exc)
 
 
 def _mark_complete(sb, document_id: int, all_txns: list[dict]) -> None:

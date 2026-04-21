@@ -4,7 +4,7 @@ npm install
 npm run dev
 
 B. ML Microservice (Python)
-cd ml-service
+cd ml-service/
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt

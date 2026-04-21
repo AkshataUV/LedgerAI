@@ -50,6 +50,7 @@ app.set('trust proxy', 1);
 const limiter = rateLimit({ windowMs: 60_000, max: 30 });
 app.use('/api/transactions/categorize-bulk', limiter);
 app.use('/api/transactions/upload-bulk', limiter);
+app.use(express.json({ limit: '10mb' }));
 
 // ==========================================
 // 🛣️ ROUTES MOUNTING
@@ -57,6 +58,15 @@ app.use('/api/transactions/upload-bulk', limiter);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api/qc', qcRoutes);
 app.use('/api/chat', chatRoutes);
+
+// ==========================================
+// 🔒 INTERNAL: Auto-Pipeline (Python → Node)
+// Called by merchant_grouping.py after grouping completes.
+// Auth is handled inside the controller (INTERNAL_SECRET bearer check).
+// ==========================================
+const { runAutoPipeline } = require('./controllers/autoPipelineController');
+app.post('/internal/auto-pipeline', express.json(), runAutoPipeline);
+
 
 // ==========================================
 // 🧪 HEALTH CHECK / QC

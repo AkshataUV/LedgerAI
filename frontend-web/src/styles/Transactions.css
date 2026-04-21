@@ -1116,3 +1116,108 @@
   color: var(--text-secondary);
   margin: 0;
 }
+
+/* ── Auto-pipeline processing UI ───────────────────────────────── */
+
+/* Full-width info banner rendered above the tab bar */
+.pipeline-processing-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  color: #93c5fd;
+  font-size: 13px;
+  font-weight: 600;
+  animation: fadeSlideIn 0.2s ease;
+}
+
+/* Small inline spinner used inside the banner */
+.pipeline-spinner {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(59, 130, 246, 0.25);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+/* Applied to table rows / cells whose document is still pipeline-running */
+.is-processing {
+  opacity: 0.55;
+  cursor: default !important;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Inline "🔒 Processing…" label shown in the dest-acc cell and actions cell */
+.processing-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+  letter-spacing: 0.2px;
+}
+
+/* ── Pipeline failure / retry UI ───────────────────────────────── */
+
+/* Full-width amber/red warning banner rendered above the tab bar */
+.pipeline-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  color: #fbbf24;
+  font-size: 13px;
+  font-weight: 600;
+  animation: fadeSlideIn 0.2s ease;
+}
+
+/* Warning icon in the error banner */
+.pipeline-error-icon {
+  font-size: 15px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+/* Inline Retry button inside the error banner */
+.pipeline-retry-btn {
+  margin-left: auto;
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  flex-shrink: 0;
+}
+
+.pipeline-retry-btn:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.22);
+  border-color: rgba(245, 158, 11, 0.6);
+}
+
+.pipeline-retry-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Applied to table cells whose document hit a pipeline failure */
+.is-pipeline-failed {
+  opacity: 0.6;
+  cursor: default !important;
+  pointer-events: none;
+  user-select: none;
+  color: #F59E0B;
+}
