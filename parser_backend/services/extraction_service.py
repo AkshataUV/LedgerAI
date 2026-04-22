@@ -23,12 +23,6 @@ logger = logging.getLogger("ledgerai.extraction_service")
 
 
 def _build_line_examples(ground_truth: list, pdf_text: str) -> str:
-    """
-    QC PANEL PORT: Searches for ground truth rows in raw text to provide 
-    concrete 'Target -> Raw Line' mapping for the LLM.
-    Uses flexible date searching (DD/MM or MM/DD) to find the line.
-    Captures continuation lines after the anchor line to show multi-line narration.
-    """
     lines = pdf_text.splitlines()
     # Precompute which lines look like transaction starters (start with a date)
     date_starter_pattern = re.compile(r'^\s*\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\b')

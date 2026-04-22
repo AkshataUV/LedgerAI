@@ -12,8 +12,8 @@
 
 const supabase = require('../config/supabaseClient');
 const logger = require('../utils/logger');
+// require('dotenv').config();
 require('dotenv').config();
-
 // ─── Chatbot-specific config (won't affect any other service) ────────
 let CHATBOT_PROVIDER = process.env.CHATBOT_LLM_PROVIDER || 'google';
 const CHATBOT_API_KEY = process.env.CHATBOT_GEMINI_API_KEY;

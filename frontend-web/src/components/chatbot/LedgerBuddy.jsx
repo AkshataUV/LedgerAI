@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../../shared/supabase';
+// import './chatbot.css';
 import './chatbot.css';
-
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 
 /* ─── SVG Icon components (inline to avoid extra deps) ─── */

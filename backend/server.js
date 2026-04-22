@@ -6,6 +6,7 @@ const chatbotRoutes = require('./chatbot/chatbotRoutes');
 const logger = require('./utils/logger');
 const transactionRoutes = require('./routes/transactionRoutes');
 const qcRoutes = require('./routes/qcRoutes');
+// const chatRoutes = require('./routes/chatRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 const rulesEngineService = require('./services/rulesEngineService');
 

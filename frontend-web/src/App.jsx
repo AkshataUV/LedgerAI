@@ -5,7 +5,7 @@ import { useRole } from './context/RoleContext';
 import { supabase, supabaseConfigError } from './shared/supabase';
 import { ParsingProvider } from './context/ParsingContext';
 //chatbot
-import LedgerBuddy from './components/Chatbot/LedgerBuddy';
+import LedgerBuddy from './components/chatbot/LedgerBuddy';
 // Pages & Components
 import AuthPage from './components/AuthPage';
 import Overview from './components/pages/Overview';

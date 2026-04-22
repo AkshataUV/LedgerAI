@@ -17,8 +17,8 @@ from auth.utils import get_current_user
 
 logger = logging.getLogger("ledgerai.document_routes")
 
+# router
 router = APIRouter()
-
 SUPABASE_STORAGE_BUCKET = "financial_document_uploads"  # Change this to your actual bucket name
 
 # ── Transaction row validator ─────────────────────────────────────────────────

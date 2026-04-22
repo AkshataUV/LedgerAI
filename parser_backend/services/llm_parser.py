@@ -13,7 +13,7 @@ import logging
 
 from google.genai import types
 from config import LLM_PARSER_MODEL
-from services.llm_provider import call_llm   # ← replaces direct Gemini calls
+from services.llm_provider import call_llm   
 
 logger = logging.getLogger("ledgerai.llm_parser")
 

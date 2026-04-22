@@ -83,7 +83,6 @@ def call_llm(
     # ── 1. 9router (local, primary for testing) ──────────────────────────────
     if NINEROUTER_API_KEY:
         try:
-            # For testing, we can force 9router to handle all calls.
             # If the provided model is a Gemini string, we can either map it or just use NINEROUTER_MODEL.
             result = _call_ninerouter(
                 prompt=prompt,
@@ -269,4 +268,4 @@ def _call_openrouter(
     data = resp.json()
 
     # OpenRouter returns OpenAI-format responses
-    return data["choices"][0]["message"]["content"].strip()
+    return data["choices"][0]["message"]["content"].strip()

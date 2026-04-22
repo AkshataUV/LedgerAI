@@ -395,7 +395,7 @@ def process_document(
             vetting_text    = vetting_text,
             identity_json   = identity_json,
             sample_text     = sample_text,
-            statement_id    = statement_id,  # None for new formats (saved later)
+            statement_id    = statement_id,  
         )
 
         logger.info(

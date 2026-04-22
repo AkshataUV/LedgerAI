@@ -79,7 +79,6 @@ DATE_RE = re.compile(
 )
 AMOUNT_RE = re.compile(r'[\d,]+\.\d{2}')
 
-# Continuation-row merge settings (Synced with pdf_extractor v6.3)
 _DATE_ZONE_COLS = 30   # Date occurs in left-most 30 chars of a grid line
 _MIN_LEADING    = 1    # Lines with >= 1 leading space are continuation candidates
 

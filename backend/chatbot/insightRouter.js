@@ -10,8 +10,8 @@
  * the nuance. Never fail a user's data question just because the pattern wasn't listed.
  */
 
+// const logger = require('../utils/logger');
 const logger = require('../utils/logger');
-
 // ─── Queries that MUST go to LLM (external / real-time / advice) ─────
 // These patterns are checked FIRST. If none match → STATISTICAL by default.
 const LLM_ONLY_PATTERNS = [

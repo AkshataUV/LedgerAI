@@ -6,6 +6,7 @@
 /* ─── Floating Trigger Button (Draggable) ─── */
 .lb-trigger {
   position: fixed;
+  /* bottom: 2rem; */
   bottom: 2rem;
   right: 2rem;
   width: 56px;

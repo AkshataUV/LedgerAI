@@ -16,21 +16,6 @@ logger = logging.getLogger("ledgerai.identifier_service")
 # ════════════════════════════════════════════════════════════
 # INSTITUTION NAME NORMALISATION  [UNTOUCHED]
 # ════════════════════════════════════════════════════════════
-# Only strips pure legal registration suffixes: Limited / Ltd / Pvt / Private.
-# Every other word is kept — including "Bank", "Payments Bank",
-# "Small Finance Bank", "Co-operative Bank" — because these are all
-# semantically meaningful parts of the actual bank name.
-#
-# Verified against 44 Indian bank name patterns:
-#   "HDFC Bank Limited"              → "HDFC BANK"
-#   "Bank of India"                  → "BANK OF INDIA"   (NOT "BANK OF")
-#   "Central Bank of India"          → "CENTRAL BANK OF INDIA"
-#   "AU Small Finance Bank Limited"  → "AU SMALL FINANCE BANK"
-#   "Airtel Payments Bank Limited"   → "AIRTEL PAYMENTS BANK"
-#   "Saraswat Co-operative Bank Ltd" → "SARASWAT CO-OPERATIVE BANK"
-#   "Indian Bank"                    → "INDIAN BANK"
-# ════════════════════════════════════════════════════════════
-
 _LEGAL_SUFFIX_RE = re.compile(
     r"\s*,?\s*\b(limited|ltd\.?|pvt\.?|private)\s*$",
     re.IGNORECASE,

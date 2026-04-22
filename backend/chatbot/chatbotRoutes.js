@@ -15,6 +15,7 @@ const {
 } = require('./chatbotController');
 
 // All chatbot routes require authentication
+// router.use(authMiddleware);
 router.use(authMiddleware);
 
 /**

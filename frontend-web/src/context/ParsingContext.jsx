@@ -2,8 +2,8 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { useNavigate } from 'react-router-dom';
 import API from '../api/api';
 
+// const ParsingContext = createContext();
 const ParsingContext = createContext();
-
 export const useParsing = () => useContext(ParsingContext);
 
 // Step definition logic — moved to context for consistency

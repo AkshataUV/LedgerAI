@@ -11,8 +11,8 @@
  */
 
 const supabase = require('../config/supabaseClient');
+// const logger   = require('../utils/logger');
 const logger   = require('../utils/logger');
-
 // ─── Catch-all account name filter ──────────────────────────────────
 const CATCH_ALL_EXACT = new Set([
   'uncategorized','uncategorised','unclassified expenses','unclassified assets',

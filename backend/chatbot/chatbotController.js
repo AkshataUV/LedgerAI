@@ -197,8 +197,8 @@ const getInsightHistory = async (req, res) => {
  */
 const clearInsightHistory = async (req, res) => {
   try {
+    // const userId = req.user.id;
     const userId = req.user.id;
-
     // Soft-clear: create a new session. Old messages remain in DB for audit.
     const { data: newSession, error } = await supabase
       .from('ai_chat_sessions')
