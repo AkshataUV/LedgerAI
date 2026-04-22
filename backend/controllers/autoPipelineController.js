@@ -166,7 +166,6 @@ async function runAutoPipeline(req, res) {
         .from('personal_vector_cache')
         .select('cache_id, embedding')
         .in('cache_id', cacheRefs)
-        .eq('status', 'staging');
 
       if (cacheErr) {
         logger.warn('[AUTO-PIPELINE] Could not fetch staging embeddings', { error: cacheErr.message });
