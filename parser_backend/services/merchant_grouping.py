@@ -684,6 +684,10 @@ def _trigger_auto_pipeline(document_id: int, user_id: str) -> None:
     node_url = os.environ.get("NODE_BACKEND_URL", "http://127.0.0.1:3000")
     secret = os.environ.get("INTERNAL_SECRET", "")
 
+    if not secret:
+        logger.error("[AUTO-PIPELINE] INTERNAL_SECRET is not set — cannot trigger auto-pipeline. Set it in parser_backend/.env")
+        return
+
     try:
         resp = httpx.post(
             f"{node_url}/internal/auto-pipeline",
