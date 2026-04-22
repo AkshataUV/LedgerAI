@@ -412,7 +412,7 @@ async function processUploadSSE(req, res) {
       const { error: promoteErr } = await supabase
         .from('personal_vector_cache')
         .update({ status: 'confirmed' })
-        .in('id', llmVectorCacheRefs)
+        .in('cache_id', llmVectorCacheRefs)
         .eq('status', 'staging');
 
       if (promoteErr) {

@@ -182,6 +182,7 @@ async function findVectorMatchWithEmbedding(embedding, userId, balanceNature) {
     const requiredBalanceNature = balanceNature === 'DEBIT' ? 'DEBIT' : 'CREDIT';
 
     // ── Stage 3.1: PERSONAL VECTOR CACHE ──────────────────────────────────────
+    // Threshold 0.35 — personal history is trusted at lower similarity
     const { data: pData, error: pError } = await supabase.rpc('match_personal_vectors', {
       p_user_id: userId,
       query_embedding: embedding,
@@ -206,9 +207,12 @@ async function findVectorMatchWithEmbedding(embedding, userId, balanceNature) {
     // The stage is intentionally a no-op for this embedding-first path.
 
     // ── Stage 3.2: GLOBAL VECTOR CACHE ───────────────────────────────────────
+    // Threshold 0.80 — global matches need high confidence to avoid swallowing
+    // LLM-worthy transactions. At 0.35 almost any string matched some global
+    // category, leaving llm_queue always empty.
     const { data: gData, error: gError } = await supabase.rpc('match_vectors', {
       query_embedding: embedding,
-      match_threshold: 0.35,
+      match_threshold: 0.80,
       match_count: 1
     });
 

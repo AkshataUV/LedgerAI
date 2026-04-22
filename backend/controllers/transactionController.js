@@ -157,10 +157,11 @@ async function recategorizeTransaction(req, res) {
 
       suggestedAccount = suggestedAccountData || null;
 
-      // ── Priority 0: group_id matching ──────────────────────────────
-      // Surface pre-pipeline (uncategorised) group members before falling back
-      // to the existing extracted_id and offset_account_id logic.
-      // Only runs when the transaction has a linked uncategorized_transaction_id.
+      // ── Priority 0: group_id matching ──────────────────────────────────────
+      // Surface group members that are not yet APPROVED.
+      // Two buckets:
+      //   a) Already in transactions as PENDING — shown as regular similar txns
+      //   b) Not yet in transactions at all (pre-pipeline) — shown as is_pre_pipeline
       if (updatedTxn.uncategorized_transaction_id) {
         const { data: uncatSource } = await supabase
           .from('uncategorized_transactions')
@@ -172,48 +173,89 @@ async function recategorizeTransaction(req, res) {
         const groupId = uncatSource?.group_id;
 
         if (groupId) {
-          // Fetch all group members still in uncategorized_transactions (not yet pipeline-processed)
-          const { data: groupMembers } = await supabase
-            .from('uncategorized_transactions')
-            .select('uncategorized_transaction_id, details, txn_date, debit, credit, account_id, group_id')
-            .eq('group_id', groupId)
+          // a) PENDING group members already in transactions table
+          const { data: pendingGroupTxns } = await supabase
+            .from('transactions')
+            .select(`
+              transaction_id,
+              uncategorized_transaction_id,
+              amount,
+              transaction_type,
+              transaction_date,
+              details,
+              extracted_id,
+              offset_account_id,
+              attention_level,
+              current_account:offset_account_id (
+                account_id,
+                account_name
+              )
+            `)
             .eq('user_id', userId)
-            .neq('uncategorized_transaction_id', updatedTxn.uncategorized_transaction_id)
-            .neq('grouping_status', 'skipped')
-            .limit(20);
+            .eq('review_status', 'PENDING')
+            .neq('transaction_id', transactionId)
+            .not('uncategorized_transaction_id', 'is', null);
 
-          if (groupMembers && groupMembers.length > 0) {
-            const memberIds = groupMembers.map(m => m.uncategorized_transaction_id);
-
-            // Determine which group members are already in the transactions table
-            const { data: alreadyCategorised } = await supabase
-              .from('transactions')
+          // Filter to those whose uncategorized row belongs to the same group
+          const groupTxnUncatIds = new Set(
+            (await supabase
+              .from('uncategorized_transactions')
               .select('uncategorized_transaction_id')
-              .in('uncategorized_transaction_id', memberIds)
-              .eq('user_id', userId);
+              .eq('group_id', groupId)
+              .eq('user_id', userId)
+              .neq('uncategorized_transaction_id', updatedTxn.uncategorized_transaction_id)
+              .then(r => r.data || []))
+              .map(r => r.uncategorized_transaction_id)
+          );
 
-            const alreadyCategorisedIds = new Set(
-              (alreadyCategorised || []).map(r => r.uncategorized_transaction_id)
-            );
+          const pendingMembers = (pendingGroupTxns || []).filter(
+            t => groupTxnUncatIds.has(t.uncategorized_transaction_id)
+          );
 
-            // Only surface rows that are purely pre-pipeline (not yet in transactions table)
-            const prePipelineMembers = groupMembers.filter(
-              m => !alreadyCategorisedIds.has(m.uncategorized_transaction_id)
-            );
+          if (pendingMembers.length > 0) {
+            similarTransactions = pendingMembers;
+          }
 
-            if (prePipelineMembers.length > 0) {
-              similarTransactions = prePipelineMembers.map(m => ({
-                transaction_id: null,
-                amount: m.debit || m.credit,
-                transaction_type: m.debit ? 'DEBIT' : 'CREDIT',
-                transaction_date: m.txn_date,
-                details: m.details,
-                offset_account_id: null,
-                attention_level: 'HIGH',
-                current_account: null,
-                uncategorized_transaction_id: m.uncategorized_transaction_id,
-                is_pre_pipeline: true
-              }));
+          // b) Pre-pipeline members: uncategorized rows in the group with no transactions row yet
+          if (similarTransactions.length === 0) {
+            const { data: groupMembers } = await supabase
+              .from('uncategorized_transactions')
+              .select('uncategorized_transaction_id, details, txn_date, debit, credit, account_id')
+              .eq('group_id', groupId)
+              .eq('user_id', userId)
+              .neq('uncategorized_transaction_id', updatedTxn.uncategorized_transaction_id)
+              .neq('grouping_status', 'skipped')
+              .limit(20);
+
+            if (groupMembers && groupMembers.length > 0) {
+              const memberIds = groupMembers.map(m => m.uncategorized_transaction_id);
+              // Only exclude APPROVED rows — PENDING rows are already handled above,
+              // so here we genuinely want rows with no transactions entry at all.
+              const { data: anyTxns } = await supabase
+                .from('transactions')
+                .select('uncategorized_transaction_id')
+                .in('uncategorized_transaction_id', memberIds)
+                .eq('user_id', userId);
+
+              const hasTxnIds = new Set((anyTxns || []).map(r => r.uncategorized_transaction_id));
+              const prePipelineMembers = groupMembers.filter(
+                m => !hasTxnIds.has(m.uncategorized_transaction_id)
+              );
+
+              if (prePipelineMembers.length > 0) {
+                similarTransactions = prePipelineMembers.map(m => ({
+                  transaction_id: null,
+                  amount: m.debit || m.credit,
+                  transaction_type: m.debit ? 'DEBIT' : 'CREDIT',
+                  transaction_date: m.txn_date,
+                  details: m.details,
+                  offset_account_id: null,
+                  attention_level: 'HIGH',
+                  current_account: null,
+                  uncategorized_transaction_id: m.uncategorized_transaction_id,
+                  is_pre_pipeline: true
+                }));
+              }
             }
           }
         }
@@ -671,53 +713,92 @@ async function manualCategorizeTransaction(req, res) {
         effectiveExtractedId = rulesResult.extractedId;
       }
 
-      // ── Priority 0: group_id matching ──────────────────────────────
-      // Surface pre-pipeline (uncategorised) group members before falling back
-      // to the existing extracted_id and offset_account_id logic.
+      // ── Priority 0: group_id matching ──────────────────────────────────────
+      // Surface group members that are not yet APPROVED.
+      // Two buckets:
+      //   a) Already in transactions as PENDING — shown as regular similar txns
+      //   b) Not yet in transactions at all (pre-pipeline) — shown as is_pre_pipeline
       const groupId = uncatData.group_id;
 
       if (groupId) {
-        const { data: groupMembers } = await supabase
+        // a) PENDING group members already in transactions table
+        const { data: groupUncatIds } = await supabase
           .from('uncategorized_transactions')
-          .select('uncategorized_transaction_id, details, txn_date, debit, credit, account_id, group_id')
+          .select('uncategorized_transaction_id')
           .eq('group_id', groupId)
           .eq('user_id', userId)
-          .neq('uncategorized_transaction_id', uncategorized_transaction_id)
-          .neq('grouping_status', 'skipped')
-          .limit(20);
+          .neq('uncategorized_transaction_id', uncategorized_transaction_id);
 
-        if (groupMembers && groupMembers.length > 0) {
-          const memberIds = groupMembers.map(m => m.uncategorized_transaction_id);
+        const groupUncatIdSet = new Set(
+          (groupUncatIds || []).map(r => r.uncategorized_transaction_id)
+        );
 
-          // Determine which group members are already in the transactions table
-          const { data: alreadyCategorised } = await supabase
+        if (groupUncatIdSet.size > 0) {
+          const { data: pendingGroupTxns } = await supabase
             .from('transactions')
-            .select('uncategorized_transaction_id')
-            .in('uncategorized_transaction_id', memberIds)
-            .eq('user_id', userId);
+            .select(`
+              transaction_id,
+              uncategorized_transaction_id,
+              amount,
+              transaction_type,
+              transaction_date,
+              details,
+              extracted_id,
+              offset_account_id,
+              attention_level,
+              current_account:offset_account_id (
+                account_id,
+                account_name
+              )
+            `)
+            .eq('user_id', userId)
+            .eq('review_status', 'PENDING')
+            .in('uncategorized_transaction_id', [...groupUncatIdSet]);
 
-          const alreadyCategorisedIds = new Set(
-            (alreadyCategorised || []).map(r => r.uncategorized_transaction_id)
-          );
+          const pendingMembers = pendingGroupTxns || [];
+          if (pendingMembers.length > 0) {
+            similarTransactions = pendingMembers;
+          }
+        }
 
-          // Only surface rows that are purely pre-pipeline (not yet in transactions table)
-          const prePipelineMembers = groupMembers.filter(
-            m => !alreadyCategorisedIds.has(m.uncategorized_transaction_id)
-          );
+        // b) Pre-pipeline members: uncategorized rows in the group with no transactions row yet
+        if (similarTransactions.length === 0) {
+          const { data: groupMembers } = await supabase
+            .from('uncategorized_transactions')
+            .select('uncategorized_transaction_id, details, txn_date, debit, credit, account_id')
+            .eq('group_id', groupId)
+            .eq('user_id', userId)
+            .neq('uncategorized_transaction_id', uncategorized_transaction_id)
+            .neq('grouping_status', 'skipped')
+            .limit(20);
 
-          if (prePipelineMembers.length > 0) {
-            similarTransactions = prePipelineMembers.map(m => ({
-              transaction_id: null,
-              amount: m.debit || m.credit,
-              transaction_type: m.debit ? 'DEBIT' : 'CREDIT',
-              transaction_date: m.txn_date,
-              details: m.details,
-              offset_account_id: null,
-              attention_level: 'HIGH',
-              current_account: null,
-              uncategorized_transaction_id: m.uncategorized_transaction_id,
-              is_pre_pipeline: true
-            }));
+          if (groupMembers && groupMembers.length > 0) {
+            const memberIds = groupMembers.map(m => m.uncategorized_transaction_id);
+            const { data: anyTxns } = await supabase
+              .from('transactions')
+              .select('uncategorized_transaction_id')
+              .in('uncategorized_transaction_id', memberIds)
+              .eq('user_id', userId);
+
+            const hasTxnIds = new Set((anyTxns || []).map(r => r.uncategorized_transaction_id));
+            const prePipelineMembers = groupMembers.filter(
+              m => !hasTxnIds.has(m.uncategorized_transaction_id)
+            );
+
+            if (prePipelineMembers.length > 0) {
+              similarTransactions = prePipelineMembers.map(m => ({
+                transaction_id: null,
+                amount: m.debit || m.credit,
+                transaction_type: m.debit ? 'DEBIT' : 'CREDIT',
+                transaction_date: m.txn_date,
+                details: m.details,
+                offset_account_id: null,
+                attention_level: 'HIGH',
+                current_account: null,
+                uncategorized_transaction_id: m.uncategorized_transaction_id,
+                is_pre_pipeline: true
+              }));
+            }
           }
         }
       }

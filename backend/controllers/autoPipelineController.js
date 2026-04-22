@@ -93,15 +93,24 @@ async function runAutoPipeline(req, res) {
   let pipelineError = null;  // set in catch; checked in finally to pick the right status
   try {
     // ══════════════════════════════════════════════════════════════════════════
-    // STEP 1 — Fetch uncategorised transactions that grouping did NOT write
+    // STEP 1a — Fetch IDs of transactions that have already been categorised for this document
+    const { data: existingTxns, error: existingErr } = await supabase
+      .from('transactions')
+      .select('uncategorized_transaction_id')
+      .eq('document_id', document_id)
+      .eq('user_id', user_id)
+      .not('uncategorized_transaction_id', 'is', null);
+
+    if (existingErr) {
+      logger.error('[AUTO-PIPELINE] Failed to fetch existing transaction IDs', { error: existingErr.message });
+      return res.status(500).json({ error: 'DB query failed', detail: existingErr.message });
+    }
+
+    const existingIds = (existingTxns || []).map(r => r.uncategorized_transaction_id);
+
+    // STEP 1b — Fetch uncategorised transactions that grouping did NOT write
     //          to transactions yet (no P_VEC match from grouping job).
-    //
-    // Conditions:
-    //   • document_id + user_id match
-    //   • grouping_status = 'done'  (grouping job finished)
-    //   • NOT already in transactions table
-    // ══════════════════════════════════════════════════════════════════════════
-    const { data: uncatRows, error: uncatErr } = await supabase
+    let uncatQuery = supabase
       .from('uncategorized_transactions')
       .select(
         'uncategorized_transaction_id, details, txn_date, debit, credit, ' +
@@ -109,13 +118,14 @@ async function runAutoPipeline(req, res) {
       )
       .eq('document_id', document_id)
       .eq('user_id', user_id)
-      .eq('grouping_status', 'done')
-      // Exclude rows already written to transactions
-      .not(
-        'uncategorized_transaction_id',
-        'in',
-        `(SELECT uncategorized_transaction_id FROM transactions WHERE document_id=${document_id} AND user_id='${user_id}' AND uncategorized_transaction_id IS NOT NULL)`
-      );
+      .eq('grouping_status', 'done');
+
+    // Exclude rows already written to transactions
+    if (existingIds.length > 0) {
+      uncatQuery = uncatQuery.not('uncategorized_transaction_id', 'in', `(${existingIds.join(',')})`);
+    }
+
+    const { data: uncatRows, error: uncatErr } = await uncatQuery;
 
     if (uncatErr) {
       logger.error('[AUTO-PIPELINE] Failed to fetch uncategorised rows', { error: uncatErr.message });
@@ -154,8 +164,8 @@ async function runAutoPipeline(req, res) {
     if (cacheRefs.length > 0) {
       const { data: cacheRows, error: cacheErr } = await supabase
         .from('personal_vector_cache')
-        .select('id, embedding')
-        .in('id', cacheRefs)
+        .select('cache_id, embedding')
+        .in('cache_id', cacheRefs)
         .eq('status', 'staging');
 
       if (cacheErr) {
@@ -167,7 +177,7 @@ async function runAutoPipeline(req, res) {
             try { emb = JSON.parse(emb); } catch { emb = null; }
           }
           if (Array.isArray(emb)) {
-            embeddingMap.set(row.id, emb);
+            embeddingMap.set(row.cache_id, emb);
           }
         }
       }

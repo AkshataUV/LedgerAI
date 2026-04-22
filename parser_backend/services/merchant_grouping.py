@@ -375,9 +375,12 @@ def run_merchant_grouping(document_id: int, user_id: str) -> None:
                 "hit_count": 0,
             }
             try:
-                result = sb.table("personal_vector_cache").insert(cache_row).execute()
+                result = sb.table("personal_vector_cache").upsert(
+                    cache_row,
+                    on_conflict="user_id,clean_name"
+                ).execute()
                 if result.data:
-                    cache_id = result.data[0].get("id")
+                    cache_id = result.data[0].get("cache_id")
                     if cache_id:
                         txn["vector_cache_ref"] = cache_id
                         sb.table("uncategorized_transactions")\
@@ -385,7 +388,7 @@ def run_merchant_grouping(document_id: int, user_id: str) -> None:
                           .eq("uncategorized_transaction_id", txn["uncategorized_transaction_id"])\
                           .execute()
             except Exception as exc:
-                logger.error("Failed to insert staging cache for '%s': %s", txn.get("clean_string", "")[:60], exc)
+                logger.error("Failed to upsert staging cache for '%s': %s", txn.get("clean_string", "")[:60], exc)
 
     embedded_txns = [t for t in embed_txns if t.get("embedding") is not None]
     logger.info("  %d / %d transactions embedded successfully", len(embedded_txns), len(embed_txns))
@@ -602,14 +605,39 @@ def run_merchant_grouping(document_id: int, user_id: str) -> None:
     # CHANGE 4: EXACT_THEN_DUMP miss handling
     exact_dump_txns = strategy_groups.get("EXACT_THEN_DUMP", [])
     if exact_dump_txns:
+        # Fetch user's fallback Uncategorised accounts (same lookup as autoPipelineController)
+        fallback_result = (
+            sb.table("accounts")
+            .select("account_id, account_name")
+            .eq("user_id", user_id)
+            .eq("is_system_generated", True)
+            .in_("account_name", ["Uncategorised Expense", "Uncategorised Income"])
+            .execute()
+        )
+        fallback_accounts = fallback_result.data or []
+        uncategorised_expense_id = next(
+            (a["account_id"] for a in fallback_accounts if a["account_name"] == "Uncategorised Expense"), None
+        )
+        uncategorised_income_id = next(
+            (a["account_id"] for a in fallback_accounts if a["account_name"] == "Uncategorised Income"), None
+        )
+        if not uncategorised_expense_id or not uncategorised_income_id:
+            logger.warning(
+                "Could not find Uncategorised Expense/Income accounts for user %s — EXACT_THEN_DUMP rows will have null offset_account_id",
+                user_id
+            )
+
         dump_insert_rows = []
         for txn in exact_dump_txns:
             amount = txn.get("debit") or txn.get("credit") or 0
             txn_type = "DEBIT" if txn.get("debit") else "CREDIT"
+            fallback_account_id = (
+                uncategorised_expense_id if txn_type == "DEBIT" else uncategorised_income_id
+            )
             dump_insert_rows.append({
                 "user_id":                      user_id,
                 "base_account_id":              txn.get("account_id"),
-                "offset_account_id":            None,
+                "offset_account_id":            fallback_account_id,
                 "document_id":                  document_id,
                 "transaction_date":             txn.get("txn_date"),
                 "details":                      txn.get("details"),
