@@ -12,6 +12,9 @@ from config import (
     LLM_PARSER_MODEL,
     OPENROUTER_API_KEY,
     OPENROUTER_URL,
+    NINEROUTER_API_KEY,
+    NINEROUTER_MODEL,
+    NINEROUTER_URL,
 )
 
 logger = logging.getLogger("ledgerai.llm_provider")
@@ -28,7 +31,6 @@ _GEMINI_TO_OPENROUTER = {
 }
 
 # Last-resort model when even Gemini-via-OpenRouter fails.
-# Claude Haiku is fast, cheap, and great at structured JSON extraction.
 _OPENROUTER_FALLBACK_MODEL = "anthropic/claude-haiku-4-5"
 
 # Retry settings for the Gemini direct path
@@ -50,7 +52,11 @@ def call_llm(
     temperature: float = 0,
 ) -> str:
     """
-    Call the LLM with automatic fallback.
+    Call the LLM with automatic fallback chain:
+      1. 9router (local, cheapest — if NINEROUTER_API_KEY is set)
+      2. Gemini direct (Google API)
+      3. Gemini via OpenRouter
+      4. Fallback model via OpenRouter (Claude Haiku)
 
     Args:
         prompt:      Plain text prompt (use this OR parts, not both).
@@ -74,7 +80,27 @@ def call_llm(
 
     errors = []
 
-    # ── 1. Gemini direct ─────────────────────────────────────────────────────
+    # ── 1. 9router (local, primary for testing) ──────────────────────────────
+    if NINEROUTER_API_KEY:
+        try:
+            # For testing, we can force 9router to handle all calls.
+            # If the provided model is a Gemini string, we can either map it or just use NINEROUTER_MODEL.
+            result = _call_ninerouter(
+                prompt=prompt,
+                parts=parts,
+                model=model,
+                temperature=temperature,
+            )
+            logger.info("9router OK (model=%s)", model if model else NINEROUTER_MODEL)
+            return result
+        except Exception as e:
+            err_str = str(e)
+            errors.append(f"9router: {err_str}")
+            logger.warning("9router failed: %s", err_str)
+    else:
+        logger.debug("NINEROUTER_API_KEY not set — skipping 9router")
+
+    # ── 2. Gemini direct ─────────────────────────────────────────────────────
     if _gemini_client:
         for attempt in range(_GEMINI_RETRY_ATTEMPTS):
             try:
@@ -96,7 +122,7 @@ def call_llm(
     else:
         logger.warning("Gemini client not initialised (no GEMINI_API_KEY) — skipping")
 
-    # ── 2. Gemini via OpenRouter ──────────────────────────────────────────────
+    # ── 3. Gemini via OpenRouter ──────────────────────────────────────────────
     if OPENROUTER_API_KEY:
         or_model = _GEMINI_TO_OPENROUTER.get(model, "google/gemini-2.5-flash-preview")
         try:
@@ -112,7 +138,7 @@ def call_llm(
             errors.append(f"openrouter_gemini: {e}")
             logger.warning("OpenRouter Gemini fallback failed: %s", e)
 
-        # ── 3. Fallback model via OpenRouter ──────────────────────────────────
+        # ── 4. Fallback model via OpenRouter ──────────────────────────────────
         try:
             result = _call_openrouter(
                 model=_OPENROUTER_FALLBACK_MODEL,
@@ -140,6 +166,60 @@ def call_llm(
 # ═════════════════════════════════════════════════════════════════════════════
 # INTERNAL HELPERS
 # ═════════════════════════════════════════════════════════════════════════════
+
+def _call_ninerouter(
+    prompt: Union[str, None],
+    parts: Union[list, None],
+    temperature: float,
+    model: str = None,
+) -> str:
+    """
+    Call the 9router endpoint (OpenAI-compatible REST API, local proxy).
+    Uses provided model or defaults to NINEROUTER_MODEL from config.
+    """
+    # Build messages from prompt or parts
+    if prompt:
+        messages = [{"role": "user", "content": prompt}]
+    elif parts:
+        text_parts = []
+        for p in parts:
+            if isinstance(p, str):
+                text_parts.append(p)
+            elif isinstance(p, types.Part) and hasattr(p, "text") and p.text:
+                text_parts.append(p.text)
+        combined = "\n".join(text_parts)
+        if not combined.strip():
+            raise ValueError("No text content extractable from parts for 9router")
+        messages = [{"role": "user", "content": combined}]
+    else:
+        raise ValueError("No content to send")
+
+    # If the model is a Gemini string, use NINEROUTER_MODEL instead
+    target_model = model
+    if not target_model or target_model.startswith("models/"):
+        target_model = NINEROUTER_MODEL
+
+    headers = {
+        "Authorization": f"Bearer {NINEROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": target_model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": 8192,
+        "stream": False,
+    }
+
+    resp = requests.post(NINEROUTER_URL, headers=headers, json=body, timeout=120)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if "error" in data:
+        raise RuntimeError(f"9router error: {data['error']}")
+
+    return data["choices"][0]["message"]["content"].strip()
+
 
 def _call_openrouter(
     model: str,
@@ -189,4 +269,4 @@ def _call_openrouter(
     data = resp.json()
 
     # OpenRouter returns OpenAI-format responses
-    return data["choices"][0]["message"]["content"].strip()
+    return data["choices"][0]["message"]["content"].strip()

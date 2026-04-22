@@ -62,20 +62,25 @@ def _check_encryption_pypdf(tmp_path: str, password: str = None) -> str:
     try:
         reader = PdfReader(tmp_path)
         if reader.is_encrypted:
-            if password:
+            # Try decrypting with provided password OR empty string
+            # Many bank PDFs are "encrypted" with no password (just for permissions)
+            password_to_try = password or ""
+            try:
+                # decrypt returns 0 if failure, 1 or 2 if success
+                if reader.decrypt(password_to_try) == 0:
+                    return "PASSWORD_TEXT_PDF"
+                
+                # Even if pypdf says OK, verify with pdfplumber which is more sensitive
                 try:
-                    result = reader.decrypt(password)
-                    if result == 0:
-                        return "PASSWORD_TEXT_PDF"
-                    try:
-                        with pdfplumber.open(tmp_path, password=password) as pdf:
-                            _ = pdf.pages[0].extract_text() if pdf.pages else None
-                    except Exception:
-                        return "PASSWORD_TEXT_PDF"
-                    return None
+                    with pdfplumber.open(tmp_path, password=password_to_try) as pdf:
+                        if pdf.pages:
+                             # Just try to see if we can access the first page
+                             _ = pdf.pages[0].chars
                 except Exception:
                     return "PASSWORD_TEXT_PDF"
-            else:
+                    
+                return None # Successfully opened/decrypted
+            except Exception:
                 return "PASSWORD_TEXT_PDF"
     except Exception:
         pass
@@ -83,7 +88,7 @@ def _check_encryption_pypdf(tmp_path: str, password: str = None) -> str:
 
 
 def _detect_pdf_type_pdfplumber(tmp_path: str, password: str = None) -> str:
-    with pdfplumber.open(tmp_path, password=password) as pdf:
+    with pdfplumber.open(tmp_path, password=password or "") as pdf:
         has_text = False
         has_images = False
         for page in pdf.pages:
@@ -120,12 +125,11 @@ def _detect_pdf_type_pypdf_content(tmp_path: str, password: str = None) -> str:
             raise ImportError("No fallback PDF reader available")
     reader = PdfReader(tmp_path)
     if reader.is_encrypted:
-        if password:
-            try:
-                reader.decrypt(password)
-            except Exception:
+        password_to_try = password or ""
+        try:
+            if reader.decrypt(password_to_try) == 0:
                 return "PASSWORD_TEXT_PDF"
-        else:
+        except Exception:
             return "PASSWORD_TEXT_PDF"
     has_text = False
     for page in reader.pages:

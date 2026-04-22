@@ -342,9 +342,9 @@ STEP 10: DEFINE PARSING HINTS
 - layout_type: SINGLE_COLUMN | TWO_COLUMN_PDF | MULTI_SECTION
 - summary_section_labels: Labels that mark summary lines, not transactions (e.g., ["Opening Balance", "Closing Balance", "Total Credits"])
 - transaction_boundary_signals: Signals that mark start of transaction (typically ["DATE"])
-- ref_no_pattern: Regex to match and strip reference numbers from descriptions (e.g., "Ref:\\d+")
+- ref_no_pattern: Regex to match and strip ONLY the raw reference code/number from descriptions. CRITICAL: Do NOT include words like "Ref No" or "ID" in the pattern unless they are truly noise—prefer keeping descriptive labels.
 - page_break_pattern: Pattern for page numbering (e.g., "Page \\\\d+ of \\\\d+")
-- details_strip_patterns: Patterns to clean from transaction descriptions (e.g., UPI ref numbers)
+- details_strip_patterns: Regex patterns to remove raw alphanumeric ID hashes or long reference numbers (e.g., 12-digit UPI refs) from narrations. CRITICAL: NEVER include words like "UPI", "Ref No", "NEFT", "RTGS", "IMPS", or "ID" in these patterns. ONLY target the variable numbers/codes, preserving the descriptive labels.
 - known_summary_amounts: Exact amount strings that are summary values, never transactions
 
 ══════════════════════════════════════════════════════════════════════════════

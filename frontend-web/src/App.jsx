@@ -4,7 +4,8 @@ import { useAuth } from './shared/hooks/useAuth';
 import { useRole } from './context/RoleContext';
 import { supabase, supabaseConfigError } from './shared/supabase';
 import { ParsingProvider } from './context/ParsingContext';
-
+//chatbot
+import LedgerBuddy from './components/Chatbot/LedgerBuddy';
 // Pages & Components
 import AuthPage from './components/AuthPage';
 import Overview from './components/pages/Overview';
@@ -171,6 +172,11 @@ function App() {
 
         <Route path="*" element={<div style={{ padding: '20px', color: 'white' }}>404 - Not Found ({window.location.pathname})</div>} />
       </Routes>
+
+      {/* Chatbot - Hidden during setup/welcome screens */}
+      {user && hasModules === true && hasIdentifiers === true && !roleLoading && role !== 'QC' && (
+        <LedgerBuddy />
+      )}
     </ParsingProvider>
   );
 }

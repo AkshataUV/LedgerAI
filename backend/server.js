@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
-
+const chatbotRoutes = require('./chatbot/chatbotRoutes');
 const logger = require('./utils/logger');
 const transactionRoutes = require('./routes/transactionRoutes');
 const qcRoutes = require('./routes/qcRoutes');
@@ -96,7 +96,7 @@ app.use((err, req, res, next) => {
       : err.message
   });
 });
-
+app.use('/api/chatbot', chatbotRoutes);
 // Load rules at startup
 rulesEngineService.loadRules().then(() => {
   app.listen(PORT, () => {

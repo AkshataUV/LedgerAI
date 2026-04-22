@@ -179,14 +179,23 @@ RULES
    - Footers (Page numbers, disclaimers, generated on...)
    - Summary rows (Opening Balance, Closing Balance, Total Debit/Credit)
    - Account info (Branch, IFSC, MICR, Account Number)
-3. DETAILS field must contain ONLY the transaction narration/description:
+3. MULTI-LINE NARRATION — CRITICAL:
+   - Many bank statements split a single transaction's description across 2 or 3 lines.
+   - A continuation line does NOT start with a date and does NOT contain an amount or balance.
+   - You MUST append continuation lines to the PREVIOUS transaction's "details" field using a single space.
+   - NEVER create a separate transaction entry for a continuation line.
+   - Example:
+       Line 1: "01/04/2026  UPI/CR/123456/ACME    5000.00  95000.00"
+       Line 2: "CORP PAYMENT APRIL"
+     → details = "UPI/CR/123456/ACME CORP PAYMENT APRIL"  (one transaction, merged)
+4. DETAILS field must contain ONLY the transaction narration/description:
    - Do NOT include dates, amounts, page numbers, or header text in details.
    - Do NOT include footer text, branch info, or account numbers in details.
    - Example GOOD: "NEFT CR ACME CORP SALARY"
    - Example BAD: "01/01/2025 NEFT CR ACME CORP 50000.00 Page 1 of 3"
-4. Handle Indian number formats (1,00,000.00).
-5. Normalize dates to YYYY-MM-DD.
-6. DEBIT/CREDIT: Every transaction MUST have either debit or credit filled (not both None).
+5. Handle Indian number formats (1,00,000.00).
+6. Normalize dates to YYYY-MM-DD.
+7. DEBIT/CREDIT: Every transaction MUST have either debit or credit filled (not both None).
    - If running balance increases, the amount is credit.
    - If running balance decreases, the amount is debit.
    - If column headers say Withdrawal/Debit use those.

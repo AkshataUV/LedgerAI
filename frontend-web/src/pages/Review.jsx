@@ -795,7 +795,7 @@ export default function ReviewPage() {
                     fontWeight: 500
                 }}>
                     <Info size={18} />
-                    <span>Extracted <b>{activeParser === "CODE" ? editableCodeTxns.length : editableLlmTxns.length} rows</b> — if results look incomplete or wrong, use <b>Retry extraction</b> to re-run with a different method.</span>
+                    <span>Extracted <b>{activeParser === "CODE" ? editableCodeTxns.length : editableLlmTxns.length} transactions</b></span>
                 </div>
             )}
 

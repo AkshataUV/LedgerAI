@@ -10,14 +10,14 @@ import { useParsing, extractionSteps } from "../context/ParsingContext";
 
 // ── Circular Processing Indicator ────────────────────────────────────────────
 const STAGE_META = {
-    UPLOADED:                  { label: "Initializing",                       sub: "Setting up extraction workspace...",                                   color: "var(--primary-action)", pct: 10 },
-    UPLOADING:                 { label: "Uploading",                          sub: "Sending file to processing server...",                                  color: "var(--primary-action)", pct: 10 },
-    PROCESSING:                { label: "Processing",                         sub: "Enqueuing document in extraction pipeline...",                          color: "var(--primary-action)", pct: 20 },
-    EXTRACTING_TEXT:           { label: "Extracting Text",                    sub: "Reading PDF pages and extracting raw text...",                          color: "var(--primary-action)", pct: 33 },
-    IDENTIFYING_FORMAT:        { label: "Identifying Format",                  sub: "Matching statement format in database...",                               color: "var(--primary-action)", pct: 55 },
-    PARSING_TRANSACTIONS:      { label: "Parsing Transactions",                sub: "Running Code + LLM extraction pipeline...",                              color: "var(--primary-action)", pct: 78 },
-    PARSING_TRANSACTIONS_CODE: { label: "Extracting Transactions",             sub: "Format found in DB — using stored extraction logic (fast path)...",      color: "var(--accent-color)", pct: 68 },
-    AWAITING_REVIEW:           { label: "Finalizing",                          sub: "Validating transactions and preparing review...",                        color: "var(--accent-color)", pct: 100 },
+    UPLOADED: { label: "Initializing", sub: "Setting up extraction workspace...", color: "var(--primary-action)", pct: 10 },
+    UPLOADING: { label: "Uploading", sub: "Sending file to processing server...", color: "var(--primary-action)", pct: 10 },
+    PROCESSING: { label: "Processing", sub: "Enqueuing document in extraction pipeline...", color: "var(--primary-action)", pct: 20 },
+    EXTRACTING_TEXT: { label: "Extracting Text", sub: "Reading PDF pages and extracting raw text...", color: "var(--primary-action)", pct: 33 },
+    IDENTIFYING_FORMAT: { label: "Identifying Format", sub: "Matching statement format in database...", color: "var(--primary-action)", pct: 55 },
+    PARSING_TRANSACTIONS: { label: "Parsing Transactions", sub: "Running Code + LLM extraction pipeline...", color: "var(--primary-action)", pct: 78 },
+    PARSING_TRANSACTIONS_CODE: { label: "Extracting Transactions", sub: "Format found in DB — using stored extraction logic (fast path)...", color: "var(--accent-color)", pct: 68 },
+    AWAITING_REVIEW: { label: "Finalizing", sub: "Validating transactions and preparing review...", color: "var(--accent-color)", pct: 100 },
 };
 
 function CircularProgress({ processingStatus, status, elapsedSeconds, parsedType }) {
@@ -69,7 +69,7 @@ function CircularProgress({ processingStatus, status, elapsedSeconds, parsedType
 
 export default function ParsingPage() {
     const navigate = useNavigate();
-    const { activeDoc, isExtracting, startExtraction, retryExtraction, clearActiveDoc, maxStepReached } = useParsing();
+    const { activeDoc, isExtracting, startExtraction, clearActiveDoc, maxStepReached } = useParsing();
 
     const [file, setFile] = useState(null);
     const [password, setPassword] = useState("");
@@ -88,12 +88,7 @@ export default function ParsingPage() {
     const [deleteTarget, setDeleteTarget] = useState(null);
     const [isDeleting, setIsDeleting] = useState(false);
 
-    // Retry Modal State
-    const [isRetryModalOpen, setIsRetryModalOpen] = useState(false);
-    const [retryDoc, setRetryDoc] = useState(null); // { id, name, logic_version }
-    const [retryMethod, setRetryMethod] = useState("CODE");
-    const [retryNote, setRetryNote] = useState("");
-    const [isRetrying, setIsRetrying] = useState(false);
+
 
     const sortOptions = ["Newest first", "Oldest first", "Last activity", "Alphabetically"];
 
@@ -123,26 +118,7 @@ export default function ParsingPage() {
         }
     };
 
-    const handleRetryExtraction = async () => {
-        if (!retryDoc) return;
-        setIsRetrying(true);
-        try {
-            await API.post(`/documents/${retryDoc.id}/retry`, {
-                method: retryMethod,
-                note: retryNote
-            });
-            
-            retryExtraction(retryDoc.id, retryDoc.name);
-            
-            setIsRetryModalOpen(false);
-            fetchData();
-        } catch (err) {
-            console.error(err);
-            alert("Retry failed: " + (err.response?.data?.detail || err.message));
-        } finally {
-            setIsRetrying(false);
-        }
-    };
+
 
     const sortedDocs = [...recentDocs].sort((a, b) => {
         if (sortOption === "Newest first") return new Date(b.created_at) - new Date(a.created_at);
@@ -159,7 +135,7 @@ export default function ParsingPage() {
         if (!deleteTarget || isDeleting) return;
         const { id, name } = deleteTarget;
         setIsDeleting(true);
-        setError(""); 
+        setError("");
 
         try {
             await API.delete(`/documents/${id}`);
@@ -185,7 +161,7 @@ export default function ParsingPage() {
         if (!activeDoc) return "pending";
         const currentStatus = activeDoc.processingStatus || activeDoc.status;
         if (["DONE", "APPROVE", "POSTED"].includes(currentStatus)) return "completed";
-        
+
         if (idx < maxStepReached) return "completed";
         if (idx === maxStepReached) return "active";
         return "pending";
@@ -244,11 +220,11 @@ export default function ParsingPage() {
                 <h2 style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-primary)' }}>Extraction Dashboard</h2>
             </div>
 
-            <div className="upload-page-card" style={{ 
-                background: 'var(--bg-secondary)', 
-                padding: '2.5rem 2rem', 
-                borderRadius: '16px', 
-                marginBottom: '2.5rem', 
+            <div className="upload-page-card" style={{
+                background: 'var(--bg-secondary)',
+                padding: '2.5rem 2rem',
+                borderRadius: '16px',
+                marginBottom: '2.5rem',
                 border: '1px solid var(--border-color)',
                 maxWidth: '860px',
                 margin: '0 auto 2.5rem',
@@ -279,11 +255,11 @@ export default function ParsingPage() {
                             })}
                         </div>
                         {isExtracting && (
-                            <CircularProgress 
-                                processingStatus={activeDoc.processingStatus} 
-                                status={activeDoc.status} 
-                                elapsedSeconds={activeDoc.elapsedSeconds} 
-                                parsedType={activeDoc.parsedType} 
+                            <CircularProgress
+                                processingStatus={activeDoc.processingStatus}
+                                status={activeDoc.status}
+                                elapsedSeconds={activeDoc.elapsedSeconds}
+                                parsedType={activeDoc.parsedType}
                             />
                         )}
                         {!isExtracting && activeDoc.status === "DONE" && (
@@ -297,24 +273,24 @@ export default function ParsingPage() {
 
                 {!isExtracting && (!activeDoc || activeDoc.status !== "DONE") && (
                     <>
-                        <div className="dropzone" 
+                        <div className="dropzone"
                             onClick={() => fileInputRef.current.click()}
-                            style={{ 
-                                minHeight: '180px', 
-                                border: '2px dashed var(--border-color)', 
-                                borderRadius: '12px', 
-                                display: 'flex', 
-                                flexDirection: 'column', 
-                                alignItems: 'center', 
-                                justifyContent: 'center', 
-                                padding: '1.5rem', 
+                            style={{
+                                minHeight: '180px',
+                                border: '2px dashed var(--border-color)',
+                                borderRadius: '12px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: '1.5rem',
                                 transition: 'all 0.2s ease',
                                 background: file ? 'rgba(99, 102, 241, 0.03)' : 'transparent',
                                 cursor: 'pointer'
                             }}
                         >
                             <input type="file" hidden ref={fileInputRef} onChange={onFileChange} accept=".pdf" />
-                            
+
                             {!file ? (
                                 <div style={{ textAlign: 'center' }}>
                                     <FileUp size={40} style={{ color: 'var(--primary-action)', marginBottom: '0.75rem' }} />
@@ -325,7 +301,7 @@ export default function ParsingPage() {
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--bg-primary)', padding: '10px 16px', borderRadius: '10px', border: '1px solid var(--border-color)', position: 'relative' }}>
                                     <FileText size={24} style={{ color: 'var(--primary-action)' }} />
                                     <div style={{ maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.9rem', fontWeight: 700 }}>{file.name}</div>
-                                    <button 
+                                    <button
                                         onClick={(e) => { e.stopPropagation(); setFile(null); setPassword(""); setShowPassword(false); setStatus("IDLE"); setError(""); }}
                                         style={{ background: 'rgba(231, 76, 60, 0.1)', color: '#e74c3c', border: 'none', width: '24px', height: '24px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s' }}
                                         title="Remove file"
@@ -364,18 +340,18 @@ export default function ParsingPage() {
 
                         {error && <div style={{ marginTop: '1rem', color: '#e74c3c', fontSize: '0.8rem', fontWeight: 600 }}>{error}</div>}
 
-                        <button 
-                            disabled={!file || status === "DETECTING" || (needsPassword && !password)} 
+                        <button
+                            disabled={!file || status === "DETECTING" || (needsPassword && !password)}
                             onClick={handleUpload}
-                            style={{ 
-                                width: '100%', 
-                                height: '52px', 
-                                marginTop: '1.5rem', 
-                                borderRadius: '12px', 
-                                background: (file && status !== "DETECTING" && (!needsPassword || password)) ? 'var(--primary-action)' : '#e5e7eb', 
-                                color: 'white', 
-                                border: 'none', 
-                                fontWeight: 700, 
+                            style={{
+                                width: '100%',
+                                height: '52px',
+                                marginTop: '1.5rem',
+                                borderRadius: '12px',
+                                background: (file && status !== "DETECTING" && (!needsPassword || password)) ? 'var(--primary-action)' : '#e5e7eb',
+                                color: 'white',
+                                border: 'none',
+                                fontWeight: 700,
                                 cursor: (file && status !== "DETECTING" && (!needsPassword || password)) ? 'pointer' : 'not-allowed',
                                 display: 'flex',
                                 alignItems: 'center',
@@ -398,10 +374,10 @@ export default function ParsingPage() {
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
                 {[
-                  { label: "Total", val: stats.total, icon: FileText, col: "var(--primary-action)", bg: "rgba(42, 79, 122, 0.1)" },
-                  { label: "Approved", val: stats.parsed, icon: CheckCircle, col: "var(--accent-color)", bg: "rgba(127, 175, 138, 0.15)" },
-                  { label: "Failed", val: stats.failed, icon: AlertCircle, col: "#e74c3c", bg: "rgba(231, 76, 60, 0.1)" },
-                  { label: "Pending Approval", val: stats.pending_review, icon: Clock, col: "#f39c12", bg: "rgba(243, 156, 18, 0.1)" }
+                    { label: "Total", val: stats.total, icon: FileText, col: "var(--primary-action)", bg: "rgba(42, 79, 122, 0.1)" },
+                    { label: "Approved", val: stats.parsed, icon: CheckCircle, col: "var(--accent-color)", bg: "rgba(127, 175, 138, 0.15)" },
+                    { label: "Failed", val: stats.failed, icon: AlertCircle, col: "#e74c3c", bg: "rgba(231, 76, 60, 0.1)" },
+                    { label: "Pending Approval", val: stats.pending_review, icon: Clock, col: "#f39c12", bg: "rgba(243, 156, 18, 0.1)" }
                 ].map((s, i) => (
                     <div key={i} style={{ background: 'var(--bg-secondary)', borderRadius: '16px', padding: '1.25rem', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '1rem' }}>
                         <div style={{ padding: '0.6rem', borderRadius: '10px', background: s.bg, color: s.col }}><s.icon size={20} /></div>
@@ -474,12 +450,12 @@ export default function ParsingPage() {
                                         {doc.status === 'APPROVE' ? <><CheckCircle size={12} /> Approved</> : <><div style={{ width: 6, height: 6, borderRadius: '50%', background: '#f39c12' }} /> Pending approval</>}
                                     </span>
                                 </td>
-                                <td style={{ textAlign: 'center' }}><span style={{ 
-                                    background: 'rgba(72, 62, 168, 0.08)', 
-                                    color: 'var(--primary-action)', 
-                                    padding: '4px 10px', 
-                                    borderRadius: '8px', 
-                                    fontSize: '0.7rem', 
+                                <td style={{ textAlign: 'center' }}><span style={{
+                                    background: 'rgba(72, 62, 168, 0.08)',
+                                    color: 'var(--primary-action)',
+                                    padding: '4px 10px',
+                                    borderRadius: '8px',
+                                    fontSize: '0.7rem',
                                     fontWeight: 800,
                                     display: 'inline-flex',
                                     alignItems: 'center',
@@ -491,16 +467,16 @@ export default function ParsingPage() {
                                 <td style={{ textAlign: 'center', fontSize: '0.8rem' }}>{new Date(doc.created_at).toLocaleDateString()}</td>
                                 <td style={{ textAlign: 'center', padding: '1rem 2rem' }}>
                                     <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'center' }}>
-                                        <button 
-                                            onClick={() => { navigate(`/review?id=${doc.document_id}`); clearActiveDoc(); }} 
-                                            style={{ 
-                                                background: 'none', 
-                                                border: '1px solid var(--border-color)', 
-                                                padding: '6px 12px', 
-                                                borderRadius: '8px', 
-                                                fontSize: '0.75rem', 
-                                                color: 'var(--primary-action)', 
-                                                fontWeight: 700, 
+                                        <button
+                                            onClick={() => { navigate(`/review?id=${doc.document_id}`); clearActiveDoc(); }}
+                                            style={{
+                                                background: 'none',
+                                                border: '1px solid var(--border-color)',
+                                                padding: '6px 12px',
+                                                borderRadius: '8px',
+                                                fontSize: '0.75rem',
+                                                color: 'var(--primary-action)',
+                                                fontWeight: 700,
                                                 cursor: 'pointer',
                                                 display: 'flex',
                                                 alignItems: 'center',
@@ -510,39 +486,15 @@ export default function ParsingPage() {
                                         >
                                             <TableIcon size={14} /> Transactions
                                         </button>
-                                        {doc.status !== 'APPROVE' && (
-                                            <button 
-                                                onClick={() => {
-                                                    setRetryDoc({ id: doc.document_id, name: doc.file_name, logic_version: doc.logic_version });
-                                                    setIsRetryModalOpen(true);
-                                                }} 
-                                                title="Retry Extraction"
-                                                style={{ 
-                                                    background: 'rgba(243, 156, 18, 0.05)', 
-                                                    border: '1px solid rgba(243, 156, 18, 0.3)', 
-                                                    padding: '6px 10px', 
-                                                    borderRadius: '8px', 
-                                                    color: '#f39c12', 
-                                                    cursor: 'pointer',
-                                                    transition: 'all 0.2s',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center'
-                                                }}
-                                                onMouseOver={(e) => e.currentTarget.style.transform = 'rotate(180deg)'}
-                                                onMouseOut={(e) => e.currentTarget.style.transform = 'rotate(0deg)'}
-                                            >
-                                                <RotateCcw size={16} />
-                                            </button>
-                                        )}
-                                        <button 
-                                            onClick={() => handleDeleteDocument(doc.document_id, doc.file_name)} 
-                                            style={{ 
-                                                background: 'rgba(231, 76, 60, 0.05)', 
-                                                border: '1px solid #fecaca', 
-                                                padding: '6px 10px', 
-                                                borderRadius: '8px', 
-                                                color: '#e74c3c', 
+
+                                        <button
+                                            onClick={() => handleDeleteDocument(doc.document_id, doc.file_name)}
+                                            style={{
+                                                background: 'rgba(231, 76, 60, 0.05)',
+                                                border: '1px solid #fecaca',
+                                                padding: '6px 10px',
+                                                borderRadius: '8px',
+                                                color: '#e74c3c',
                                                 cursor: 'pointer',
                                                 transition: 'all 0.2s',
                                                 display: 'flex',
@@ -571,11 +523,11 @@ export default function ParsingPage() {
                         </div>
                         <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '0.75rem' }}>Delete Document?</h3>
                         <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '2.5rem', lineHeight: 1.6 }}>
-                            Are you sure you want to delete <br/>
-                            <b style={{ 
-                                color: 'var(--primary-action)', 
-                                display: 'block', 
-                                margin: '8px 0', 
+                            Are you sure you want to delete <br />
+                            <b style={{
+                                color: 'var(--primary-action)',
+                                display: 'block',
+                                margin: '8px 0',
                                 overflowWrap: 'anywhere',
                                 wordBreak: 'break-word',
                                 padding: '0 10px'
@@ -585,26 +537,26 @@ export default function ParsingPage() {
                             This action will permanently remove all associated transactions.
                         </p>
                         <div style={{ display: 'flex', gap: '1rem' }}>
-                            <button 
-                                onClick={() => setDeleteTarget(null)} 
+                            <button
+                                onClick={() => setDeleteTarget(null)}
                                 disabled={isDeleting}
                                 style={{ flex: 1, padding: '0.875rem', borderRadius: '12px', border: '1px solid var(--glass-border)', background: 'var(--bg-primary)', fontWeight: 700, cursor: isDeleting ? 'not-allowed' : 'pointer', color: 'var(--text-secondary)', transition: 'all 0.2s', opacity: isDeleting ? 0.5 : 1 }}
                             >
                                 Cancel
                             </button>
-                            <button 
-                                onClick={confirmDelete} 
+                            <button
+                                onClick={confirmDelete}
                                 disabled={isDeleting}
-                                style={{ 
-                                    flex: 1, 
-                                    padding: '0.875rem', 
-                                    borderRadius: '12px', 
-                                    border: 'none', 
-                                    background: isDeleting ? '#fecaca' : 'var(--error)', 
-                                    color: 'white', 
-                                    fontWeight: 700, 
-                                    cursor: isDeleting ? 'not-allowed' : 'pointer', 
-                                    boxShadow: isDeleting ? 'none' : '0 4px 12px rgba(166, 61, 64, 0.2)', 
+                                style={{
+                                    flex: 1,
+                                    padding: '0.875rem',
+                                    borderRadius: '12px',
+                                    border: 'none',
+                                    background: isDeleting ? '#fecaca' : 'var(--error)',
+                                    color: 'white',
+                                    fontWeight: 700,
+                                    cursor: isDeleting ? 'not-allowed' : 'pointer',
+                                    boxShadow: isDeleting ? 'none' : '0 4px 12px rgba(166, 61, 64, 0.2)',
                                     transition: 'all 0.2s',
                                     display: 'flex',
                                     alignItems: 'center',
@@ -626,121 +578,7 @@ export default function ParsingPage() {
                 </div>
             )}
 
-            {/* Retry Extraction Modal */}
-            {isRetryModalOpen && (
-                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 11000 }}>
-                    <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} style={{ background: 'var(--bg-secondary)', padding: '2.5rem', borderRadius: '24px', border: '1px solid var(--glass-border)', maxWidth: '500px', width: '90%', boxShadow: '0 25px 60px -12px rgba(0,0,0,0.4)', color: 'var(--text-primary)' }}>
-                        <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.75rem' }}>Retry extraction</h3>
-                        <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '2rem', lineHeight: 1.6 }}>
-                            Choose a different extraction method for <b>{retryDoc?.name}</b>.
-                        </p>
 
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '2rem' }}>
-                            <label style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '4px' }}>Extraction method</label>
-                            
-                            {[
-                                { id: 'CODE', label: 'Code-based (current)', sub: 'Fastest extraction method' },
-                                { id: 'VISION', label: 'AI vision extraction', sub: 'Better for scanned or image-based PDFs', recommended: true },
-                                { id: 'MANUAL', label: 'Manual entry', sub: 'Set status to review and add manually' }
-                            ].map(method => (
-                                <div 
-                                    key={method.id}
-                                    onClick={() => setRetryMethod(method.id)}
-                                    style={{ 
-                                        padding: '1rem', 
-                                        borderRadius: '12px', 
-                                        border: `2px solid ${retryMethod === method.id ? 'var(--primary-action)' : 'var(--border-color)'}`,
-                                        background: retryMethod === method.id ? 'rgba(72, 62, 168, 0.05)' : 'var(--bg-primary)',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '12px',
-                                        transition: 'all 0.2s'
-                                    }}
-                                >
-                                    <div style={{ 
-                                        width: '20px', height: '20px', borderRadius: '50%', 
-                                        border: `2px solid ${retryMethod === method.id ? 'var(--primary-action)' : 'var(--border-color)'}`,
-                                        display: 'flex', alignItems: 'center', justifyContent: 'center'
-                                    }}>
-                                        {retryMethod === method.id && <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'var(--primary-action)' }} />}
-                                    </div>
-                                    <div style={{ flex: 1 }}>
-                                        <div style={{ fontWeight: 700, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            {method.label}
-                                            {method.recommended && <span style={{ background: 'rgba(72, 62, 168, 0.1)', color: 'var(--primary-action)', fontSize: '0.65rem', padding: '2px 8px', borderRadius: '20px' }}>Recommended</span>}
-                                        </div>
-                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{method.sub}</div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-
-                        {retryDoc?.logic_version >= 3 && (
-                            <div style={{ 
-                                padding: '1rem', 
-                                background: 'rgba(231, 76, 60, 0.08)', 
-                                border: '1px solid rgba(231, 76, 60, 0.2)', 
-                                borderRadius: '12px', 
-                                marginBottom: '2rem', 
-                                display: 'flex', 
-                                gap: '12px' 
-                            }}>
-                                <AlertCircle size={20} color="#e74c3c" style={{ flexShrink: 0 }} />
-                                <div style={{ fontSize: '0.8rem', color: '#e74c3c', lineHeight: 1.5, fontWeight: 500 }}>
-                                    <b>AI reaches its limit:</b> This format has been refined {retryDoc.logic_version} times. Artificial Intelligence is struggling to fix this structure. We recommend using <b>AI Vision</b> or manually editing the transactions.
-                                </div>
-                            </div>
-                        )}
-
-                        <div style={{ marginBottom: '2rem' }}>
-                            <label style={{ fontSize: '0.85rem', fontWeight: 700, display: 'block', marginBottom: '8px' }}>Reason / note <span style={{ fontWeight: 500, opacity: 0.6 }}>(optional)</span></label>
-                            <textarea 
-                                value={retryNote}
-                                onChange={(e) => setRetryNote(e.target.value)}
-                                placeholder="e.g. Transactions are missing from page 3 onwards..."
-                                style={{ 
-                                    width: '100%', minHeight: '100px', padding: '0.875rem', 
-                                    borderRadius: '12px', background: 'var(--bg-primary)', 
-                                    border: '1px solid var(--border-color)', color: 'var(--text-primary)',
-                                    resize: 'vertical', fontSize: '0.9rem', outline: 'none'
-                                }}
-                            />
-                        </div>
-
-                        <div style={{ display: 'flex', gap: '1rem' }}>
-                            <button 
-                                onClick={() => setIsRetryModalOpen(false)} 
-                                disabled={isRetrying}
-                                style={{ flex: 1, padding: '0.875rem', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontWeight: 700, cursor: isRetrying ? 'not-allowed' : 'pointer', color: 'var(--text-secondary)' }}
-                            >
-                                Cancel
-                            </button>
-                            <button 
-                                onClick={handleRetryExtraction} 
-                                disabled={isRetrying}
-                                style={{ 
-                                    flex: 1.5, 
-                                    padding: '0.875rem', 
-                                    borderRadius: '12px', 
-                                    border: 'none', 
-                                    background: 'var(--primary-action)', 
-                                    color: 'white', 
-                                    fontWeight: 700, 
-                                    cursor: isRetrying ? 'not-allowed' : 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    gap: '8px'
-                                }}
-                            >
-                                {isRetrying ? <Loader2 size={18} className="spin-icon" /> : <RotateCcw size={18} />}
-                                START RETRY
-                            </button>
-                        </div>
-                    </motion.div>
-                </div>
-            )}
         </motion.div>
     );
 }

@@ -20,7 +20,7 @@ export const ParsingProvider = ({ children }) => {
     const [isExtracting, setIsExtracting] = useState(false);
     const [latestFinishedDocId, setLatestFinishedDocId] = useState(null);
     const [maxStepReached, setMaxStepReached] = useState(-1);
-    
+
     const [notification, setNotification] = useState(null);
 
     const pollRef = useRef(null);
@@ -75,12 +75,12 @@ export const ParsingProvider = ({ children }) => {
             try {
                 const statusRes = await API.get(`/documents/status/${docId}`);
                 const { status: docStatus, transaction_parsed_type: docParsedType } = statusRes.data;
-                
+
                 setActiveDoc(prev => {
-                    const newDoc = { 
-                        ...prev, 
-                        processingStatus: docStatus, 
-                        parsedType: docParsedType || prev?.parsedType 
+                    const newDoc = {
+                        ...prev,
+                        processingStatus: docStatus,
+                        parsedType: docParsedType || prev?.parsedType
                     };
 
                     // Update global progress gate
@@ -215,22 +215,22 @@ const NotificationPortal = ({ notification, onClose }) => {
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
                         {notification.type === 'success' && (
-                            <button 
+                            <button
                                 onClick={onClose}
                                 style={{
-                                    background: '#483EA8', color: '#fff', border: 'none', 
-                                    padding: '6px 16px', borderRadius: '6px', fontSize: '0.75rem', 
+                                    background: '#483EA8', color: '#fff', border: 'none',
+                                    padding: '6px 16px', borderRadius: '6px', fontSize: '0.75rem',
                                     fontWeight: 700, cursor: 'pointer'
                                 }}
                             >
                                 OK
                             </button>
                         )}
-                        <button 
+                        <button
                             onClick={onClose}
                             style={{
-                                background: 'transparent', color: 'var(--text-secondary, #9ca3af)', border: '1px solid var(--border-color, #e5e7eb)', 
-                                padding: '6px 16px', borderRadius: '6px', fontSize: '0.75rem', 
+                                background: 'transparent', color: 'var(--text-secondary, #9ca3af)', border: '1px solid var(--border-color, #e5e7eb)',
+                                padding: '6px 16px', borderRadius: '6px', fontSize: '0.75rem',
                                 fontWeight: 700, cursor: 'pointer'
                             }}
                         >
