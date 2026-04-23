@@ -6,7 +6,6 @@ const chatbotRoutes = require('./chatbot/chatbotRoutes');
 const logger = require('./utils/logger');
 const transactionRoutes = require('./routes/transactionRoutes');
 const qcRoutes = require('./routes/qcRoutes');
-// const chatRoutes = require('./routes/chatRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 const rulesEngineService = require('./services/rulesEngineService');
 
@@ -73,6 +72,17 @@ app.post('/internal/auto-pipeline', express.json(), runAutoPipeline);
 // ==========================================
 // 🧪 HEALTH CHECK / QC
 // ==========================================
+// ==========================================
+// 🏓 KEEP-ALIVE PING
+// Called by:
+//   1. Frontend heartbeat (useHeartbeat hook) — every 5 min when user is active.
+//   2. parser_backend self-keep-alive — every 10 min while processing a document.
+// Returns a minimal 200 so Render resets its 15-min inactivity timer.
+// ==========================================
+app.get('/ping', (req, res) => {
+  res.status(200).json({ pong: true });
+});
+
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', message: 'LedgerAI Backend Online' });
 });

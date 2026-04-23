@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useHeartbeat } from './hooks/useHeartbeat';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './shared/hooks/useAuth';
 import { useRole } from './context/RoleContext';
@@ -39,6 +40,8 @@ const ModuleGuard = ({ hasModules, hasIdentifiers, checkSetupStatus, user, toggl
 
 function App() {
   const { user, loading: authLoading } = useAuth();
+  // Keep Render free-tier services awake while the user is active.
+  useHeartbeat();
   const { role, roleLoading } = useRole();
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [hasModules, setHasModules] = useState(null);

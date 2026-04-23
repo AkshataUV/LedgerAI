@@ -132,6 +132,20 @@ def health():
     ])
     return {"status": "ok", "supabase_configured": configured}
 
+
+@app.get("/ping")
+def ping():
+    """
+    Lightweight keep-alive endpoint.
+    Called by:
+      1. Frontend useHeartbeat hook — every 5 min while the user is active.
+      2. This service's own work-mode keep-alive — every 10 min during
+         long-running processing tasks, so Render does not sleep mid-task
+         even if the user goes AFK and the frontend stops sending heartbeats.
+    """
+    return {"pong": True}
+
+
 @app.get("/")
 def root():
     return {"message": "LedgerAI backend running"}
