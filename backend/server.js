@@ -59,6 +59,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use('/api/transactions', transactionRoutes);
 app.use('/api/qc', qcRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/chatbot', chatbotRoutes);
 
 // ==========================================
 // 🔒 INTERNAL: Auto-Pipeline (Python → Node)
@@ -97,7 +98,6 @@ app.use((err, req, res, next) => {
       : err.message
   });
 });
-app.use('/api/chatbot', chatbotRoutes);
 // Load rules at startup
 rulesEngineService.loadRules().then(() => {
   app.listen(PORT, () => {
