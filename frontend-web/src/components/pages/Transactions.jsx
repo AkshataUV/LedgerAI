@@ -1833,7 +1833,7 @@ const Transactions = () => {
             >
               {isCategorizing
                 ? <><span className="spinner-small"></span> {categoriseStatus || 'Categorising…'}</>
-                : <><ICONS.Robot /> Categorise</>
+                : <><ICONS.Robot /> AI Categorise</>
               }
             </button>
           )}

@@ -38,6 +38,24 @@ const rulesEngineService = require('../services/rulesEngineService');
 const personalCacheService = require('../services/personalCacheService');
 const vectorMatchService = require('../services/vectorMatchService');
 
+// ── Person-name guard (mirrors Python _is_person_name) ───────────────────────
+// Prevents UPI P2P transfer names (e.g. RUPALIMAHADEV) from reaching G_VEC.
+
+const KNOWN_BRANDS = new Set([
+  'AMAZON', 'SWIGGY', 'ZOMATO', 'NETFLIX', 'SPOTIFY', 'AIRTEL', 'JIOMART',
+  'BLINKIT', 'ZEPTO', 'MYNTRA', 'FLIPKART', 'PAYTM', 'PHONEPE', 'GPAY',
+  'IRCTC', 'HDFC', 'ICICI', 'AXIS', 'KOTAK', 'TATANEU', 'MEESHO', 'AJIO',
+  'NYKAA', 'BIGBASKET', 'RAPIDO', 'OLA', 'UBER', 'MAKEMYTRIP', 'BOOKMYSHOW',
+]);
+
+function isPersonName(cleanName) {
+  if (!cleanName) return false;
+  const s = cleanName.trim().toUpperCase();
+  if (!/^[A-Z]{4,25}$/.test(s)) return false;
+  if ([...KNOWN_BRANDS].some(brand => s.includes(brand))) return false;
+  return true;
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 function verifyInternalSecret(req) {
@@ -160,12 +178,13 @@ async function runAutoPipeline(req, res) {
       .filter(Boolean);
 
     const embeddingMap = new Map(); // cache_id → float[]
+    const cleanNameMap = new Map(); // cache_id → clean_name string
 
     if (cacheRefs.length > 0) {
       const { data: cacheRows, error: cacheErr } = await supabase
         .from('personal_vector_cache')
-        .select('cache_id, embedding')
-        .in('cache_id', cacheRefs)
+        .select('cache_id, embedding, clean_name')
+        .in('cache_id', cacheRefs);
 
       if (cacheErr) {
         logger.warn('[AUTO-PIPELINE] Could not fetch staging embeddings', { error: cacheErr.message });
@@ -177,6 +196,9 @@ async function runAutoPipeline(req, res) {
           }
           if (Array.isArray(emb)) {
             embeddingMap.set(row.cache_id, emb);
+          }
+          if (row.clean_name) {
+            cleanNameMap.set(row.cache_id, row.clean_name);
           }
         }
       }
@@ -294,11 +316,27 @@ async function runAutoPipeline(req, res) {
       const vecCacheRef = pre.vector_cache_ref;
       const embedding = vecCacheRef ? embeddingMap.get(vecCacheRef) : null;
 
+      const cleanName = vecCacheRef ? cleanNameMap.get(vecCacheRef) || null : null;
+
       if (embedding) {
+        // Guard: if clean_name looks like a person's name (UPI P2P), skip G_VEC
+        // and send straight to LLM/manual review. This handles old rows that were
+        // persisted before the Python-side fix was deployed.
+        if (isPersonName(cleanName)) {
+          logger.info('[AUTO-PIPELINE] Person name detected — skipping vector stage', {
+            txnId,
+            cleanName,
+          });
+          llmLeftovers.push(txnId);
+          if (gid) groupResultMap.set(gid, null);
+          continue;
+        }
+
         const vectorMatch = await vectorMatchService.findVectorMatchWithEmbedding(
           embedding,
           user_id,
-          balanceNature
+          balanceNature,
+          cleanName
         );
 
         if (vectorMatch) {

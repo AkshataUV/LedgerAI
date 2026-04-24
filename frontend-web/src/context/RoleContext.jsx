@@ -17,6 +17,7 @@ export function RoleProvider({ children }) {
     }
 
     const fetchRole = async () => {
+      setRoleLoading(true);
       try {
         const { data, error } = await supabase
           .from('profiles')

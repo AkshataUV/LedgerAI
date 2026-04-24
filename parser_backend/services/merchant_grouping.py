@@ -111,6 +111,37 @@ def _derive_clean_string_no_rule(details: str) -> str:
     return re.sub(r"\s+", " ", text).strip() or "UNKNOWN"
 
 
+# ── Person-name detection ──────────────────────────────────────────────────────
+# Known brand keywords that are purely alphabetic — must NOT be flagged as names.
+_KNOWN_BRANDS = {
+    'AMAZON', 'SWIGGY', 'ZOMATO', 'NETFLIX', 'SPOTIFY', 'AIRTEL',
+    'JIOMART', 'BLINKIT', 'ZEPTO', 'MYNTRA', 'FLIPKART', 'PAYTM',
+    'PHONEPE', 'GPAY', 'IRCTC', 'HDFC', 'ICICI', 'AXIS', 'KOTAK',
+    'INDUSIND', 'CANARA', 'YESBANK', 'TATANEU', 'MEESHO', 'AJIO',
+    'NYKAA', 'BIGBASKET', 'DUNZO', 'RAPIDO', 'OLA', 'UBER',
+    'MAKEMYTRIP', 'GOIBIBO', 'CLEARTRIP', 'YATRA', 'BOOKMYSHOW',
+    'HOTSTAR', 'PRIMEVIDEO', 'JIOCINEMA', 'GAANA', 'WYNK'
+}
+
+
+def _is_person_name(clean_string: str) -> bool:
+    """
+    Heuristic to detect if a clean string extracted from a UPI transaction
+    is a person's name rather than a merchant name.
+
+    Person names: purely alphabetic, 4-25 chars, not a known brand.
+    Examples: RUPALIMAHADEV, ASHISHKUMAR, PRIYANKA, RAJESHWARI
+    """
+    s = clean_string.strip().upper()
+    # Must be purely alphabetic (no digits, no spaces in extracted name)
+    if not re.match(r'^[A-Z]{4,25}$', s):
+        return False
+    # Whitelist known brands
+    if any(brand in s for brand in _KNOWN_BRANDS):
+        return False
+    return True
+
+
 def _embed_batch(clean_strings: list[str]) -> list[list[float] | None]:
     """
     Call the ML service /embed endpoint for each string in the batch.
@@ -195,9 +226,22 @@ def _classify_transactions(
                 # Try to extract clean string from first capture group
                 try:
                     extracted = m.group(1)
-                    txn["clean_string"] = extracted.strip() if extracted else details
+                    clean = extracted.strip() if extracted else details
                 except IndexError:
-                    txn["clean_string"] = details
+                    extracted = None
+                    clean = details
+
+                # If the extracted string looks like a person's name (UPI P2P transfer),
+                # reclassify as EXACT_THEN_DUMP so it goes to manual review rather than G_VEC.
+                if extracted and _is_person_name(extracted):
+                    logger.debug(
+                        "[CLASSIFY] Person name detected '%s' in '%s' — reclassifying to EXACT_THEN_DUMP",
+                        extracted[:40], details[:80]
+                    )
+                    txn["pre_pipeline_strategy"] = "EXACT_THEN_DUMP"
+                    txn["clean_string"] = None
+                else:
+                    txn["clean_string"] = clean
 
             break  # first matching rule wins
 

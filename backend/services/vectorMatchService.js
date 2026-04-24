@@ -106,7 +106,7 @@ async function findVectorMatch(cleanString, userId, transactionType) {
         }
 
         // balance_nature mismatch — continue to next rule
-        console.warn(`⚠️ Keyword rule "${keyword}" (template:${rule.target_template_id}) skipped — balance_nature mismatch. Required: ${requiredBalanceNature}`);
+        console.debug(`⚠️ Keyword rule "${keyword}" (template:${rule.target_template_id}) skipped — balance_nature mismatch. Required: ${requiredBalanceNature}`);
       }
     }
 
@@ -150,7 +150,7 @@ async function findVectorMatch(cleanString, userId, transactionType) {
         };
       }
 
-      console.warn(`⚠️ Global vector match found but balance_nature mismatch. Template: ${targetTemplateId}, Required: ${requiredBalanceNature}`);
+      console.debug(`⚠️ Global vector match found but balance_nature mismatch. Template: ${targetTemplateId}, Required: ${requiredBalanceNature}`);
     }
 
     return null;
@@ -175,7 +175,7 @@ async function findVectorMatch(cleanString, userId, transactionType) {
  * @param {string}   balanceNature  - 'DEBIT' or 'CREDIT'.
  * @returns {object|null} { offset_account_id, categorised_by, confidence_score } or null.
  */
-async function findVectorMatchWithEmbedding(embedding, userId, balanceNature) {
+async function findVectorMatchWithEmbedding(embedding, userId, balanceNature, cleanName = null) {
   try {
     if (!embedding || !Array.isArray(embedding) || !userId) return null;
 
@@ -201,18 +201,62 @@ async function findVectorMatchWithEmbedding(embedding, userId, balanceNature) {
     }
 
     // ── Stage 3.1.5: GLOBAL KEYWORD RULES ────────────────────────────────────
-    // NOTE: Keyword rules match on the clean string, which is encoded inside
-    // the embedding. Without the original text we skip keyword rules here —
-    // they will be picked up by the LLM fallback if still unresolved.
-    // The stage is intentionally a no-op for this embedding-first path.
+    // High-confidence deterministic matching for known merchants (e.g. SWIGGY, ZOMATO, AIRTEL).
+    // Runs only when cleanName is available; silently skipped otherwise.
+    if (cleanName) {
+      const uppercaseCleanName = cleanName.toUpperCase();
+      const { data: keywordRules } = await supabase
+        .from('global_keyword_rules')
+        .select('keyword, match_type, target_template_id, priority')
+        .eq('is_active', true)
+        .order('priority', { ascending: false });
+
+      if (keywordRules && keywordRules.length > 0) {
+        for (const rule of keywordRules) {
+          const keyword = rule.keyword.toUpperCase();
+          const isMatch = rule.match_type === 'EXACT'
+            ? uppercaseCleanName === keyword
+            : uppercaseCleanName.includes(keyword);
+
+          if (!isMatch) continue;
+
+          console.debug(`🔑 Keyword rule matched: "${keyword}" (priority:${rule.priority}, template:${rule.target_template_id}) on "${uppercaseCleanName.slice(0, 60)}"`);
+
+          const { data: accData, error: accError } = await supabase
+            .from('accounts')
+            .select('account_id')
+            .eq('user_id', userId)
+            .eq('template_id', rule.target_template_id)
+            .eq('is_active', true)
+            .eq('balance_nature', requiredBalanceNature)
+            .limit(1);
+
+          if (accError) {
+            console.error('❌ findVectorMatchWithEmbedding (Keyword) template mapping error:', accError);
+            continue; // Try next rule on error
+          }
+
+          if (accData && accData.length > 0) {
+            console.info(`✅ G_KEY winner: "${keyword}" → template:${rule.target_template_id} → account:${accData[0].account_id}`);
+            return {
+              offset_account_id: accData[0].account_id,
+              confidence_score: 0.95,
+              categorised_by: 'G_KEY'
+            };
+          }
+
+          // balance_nature mismatch — continue to next rule
+          console.debug(`⚠️ Keyword rule "${keyword}" (template:${rule.target_template_id}) skipped — balance_nature mismatch. Required: ${requiredBalanceNature}`);
+        }
+      }
+    }
 
     // ── Stage 3.2: GLOBAL VECTOR CACHE ───────────────────────────────────────
-    // Threshold 0.80 — global matches need high confidence to avoid swallowing
-    // LLM-worthy transactions. At 0.35 almost any string matched some global
-    // category, leaving llm_queue always empty.
+    // Threshold 0.35 — mirrors original findVectorMatch() behaviour.
+    // G_KEY now handles known merchants, so 0.35 is safe as a final safety net.
     const { data: gData, error: gError } = await supabase.rpc('match_vectors', {
       query_embedding: embedding,
-      match_threshold: 0.80,
+      match_threshold: 0.35,
       match_count: 1
     });
 
@@ -243,7 +287,7 @@ async function findVectorMatchWithEmbedding(embedding, userId, balanceNature) {
         };
       }
 
-      console.warn(`⚠️ findVectorMatchWithEmbedding: Global match found but balance_nature mismatch. Required: ${requiredBalanceNature}`);
+      console.debug(`⚠️ findVectorMatchWithEmbedding: Global match found but balance_nature mismatch. Required: ${requiredBalanceNature}`);
     }
 
     return null;
