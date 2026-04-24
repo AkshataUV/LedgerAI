@@ -128,10 +128,25 @@ function App() {
   }
 
   // Wait for Auth AND Role to minimize transient "no-user" states during refresh
-  if (authLoading || roleLoading || (user && loading)) {
+  // Optimized loading guard: Only show full-screen loader on initial mount.
+  // If we already have a user and role, don't unmount the entire app just because a refresh is happening in the background.
+  const isInitialLoading = (authLoading || roleLoading || loading) && (!user || !role);
+  
+  if (isInitialLoading) {
     return (
-      <div style={{ height: '100vh', display: 'grid', placeItems: 'center', backgroundColor: 'var(--bg-primary, #0f172a)', color: 'var(--text-primary, #e2e8f0)', fontFamily: 'Inter, sans-serif' }}>
-        Initializing LedgerAI...
+      <div style={{ 
+        height: '100vh', 
+        display: 'grid', 
+        placeItems: 'center', 
+        backgroundColor: 'var(--bg-primary, #0B1220)', 
+        color: 'var(--text-primary, #E6E8EC)', 
+        fontFamily: "'Outfit', sans-serif" 
+      }}>
+        <div style={{ textAlign: 'center' }}>
+           <div style={{ width: '40px', height: '40px', border: '3px solid var(--border-color)', borderTopColor: 'var(--primary-action)', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 1rem' }}></div>
+           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+           <div style={{ fontWeight: 600, letterSpacing: '0.5px' }}>Initializing LedgerAI...</div>
+        </div>
       </div>
     );
   }

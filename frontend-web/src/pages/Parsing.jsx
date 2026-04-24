@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { motion } from "framer-motion";
 import {
     FileUp, CheckCircle, Loader2, AlertCircle, Search, Cpu, List, Lock,
-    FileText, Clock, ChevronDown, Table as TableIcon, Trash2, RotateCcw, Code, Eye, EyeOff
+    FileText, Clock, ChevronDown, Table as TableIcon, Trash2, RotateCcw, Code, Eye, EyeOff, ScrollText
 } from "lucide-react";
 // import API from "../api/api";
 import API from "../api/api";
@@ -111,11 +111,12 @@ export default function ParsingPage() {
     const [deleteTarget, setDeleteTarget] = useState(null);
     const [isDeleting, setIsDeleting] = useState(false);
 
-    // Pagination State
+    // Pagination & Filter State
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize] = useState(15);
     const [totalResults, setTotalResults] = useState(0);
     const [searchTerm, setSearchTerm] = useState("");
+    
     const totalPages = Math.ceil((totalResults || 0) / pageSize);
 
 
@@ -125,7 +126,7 @@ export default function ParsingPage() {
     useEffect(() => {
         const timer = setTimeout(() => {
             fetchData(currentPage);
-        }, 300); // 300ms debounce
+        }, 300);
         return () => clearTimeout(timer);
     }, [currentPage, sortOption, searchTerm]);
 
@@ -142,20 +143,28 @@ export default function ParsingPage() {
             if (sortOption === "Oldest first") sortParam = "oldest";
             if (sortOption === "Alphabetically") sortParam = "alpha";
 
+            const params = {
+                page,
+                limit: pageSize,
+                sort: sortParam,
+                search: searchTerm || undefined
+            };
+
             const [statsRes, recentRes] = await Promise.all([
                 API.get("/documents/stats"),
-                API.get("/documents/recent", { 
-                    params: { 
-                        page, 
-                        limit: pageSize,
-                        sort: sortParam,
-                        search: searchTerm || undefined
-                    } 
-                })
+                API.get("/documents/recent", { params })
             ]);
+            
             setStats(statsRes.data);
             setRecentDocs(recentRes.data.data);
             setTotalResults(recentRes.data.total);
+            
+            // Extract unique banks from recent docs for the filter (simplified)
+            // Ideally we'd have an endpoint for this
+            if (availableBanks.length === 0 && recentRes.data.data.length > 0) {
+                 const banks = [...new Set(recentRes.data.data.map(d => d.institution_name).filter(Boolean))].sort();
+                 setAvailableBanks(banks);
+            }
         } catch (err) {
             console.error("Failed to fetch dashboard data", err);
         } finally {
@@ -416,24 +425,52 @@ export default function ParsingPage() {
                 )}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
-                {[
-                    { label: "Total", val: stats.total, icon: FileText, col: "var(--primary-action)", bg: "rgba(42, 79, 122, 0.1)" },
-                    { label: "Approved", val: stats.parsed, icon: CheckCircle, col: "var(--accent-color)", bg: "rgba(127, 175, 138, 0.15)" },
-                    { label: "Failed", val: stats.failed, icon: AlertCircle, col: "#e74c3c", bg: "rgba(231, 76, 60, 0.1)" },
-                    { label: "Pending Approval", val: stats.pending_review, icon: Clock, col: "#f39c12", bg: "rgba(243, 156, 18, 0.1)" }
-                ].map((s, i) => (
-                    <div key={i} style={{ background: 'var(--bg-secondary)', borderRadius: '16px', padding: '1.25rem', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                        <div style={{ padding: '0.6rem', borderRadius: '10px', background: s.bg, color: s.col }}><s.icon size={20} /></div>
-                        <div><div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 600 }}>{s.label}</div><div style={{ fontSize: '1.25rem', fontWeight: 800 }}>{s.val}</div></div>
+            <div id="parsing-summary" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1.5rem', marginBottom: '3rem' }}>
+                <div style={{ background: 'var(--card-bg)', borderRadius: '20px', padding: '1.5rem', display: 'flex', alignItems: 'center', gap: '1.25rem', border: '1px solid var(--border-color)', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}>
+                    <div style={{ padding: '0.75rem', background: 'rgba(72, 62, 168, 0.08)', borderRadius: '14px', color: 'var(--primary-action)' }}>
+                        <ScrollText size={24} />
                     </div>
-                ))}
+                    <div>
+                        <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '4px' }}>Total</div>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)' }}>{stats.total || 0}</div>
+                    </div>
+                </div>
+                
+                <div style={{ background: 'var(--card-bg)', borderRadius: '20px', padding: '1.5rem', display: 'flex', alignItems: 'center', gap: '1.25rem', border: '1px solid var(--border-color)', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}>
+                    <div style={{ padding: '0.75rem', background: 'rgba(127, 175, 138, 0.1)', borderRadius: '14px', color: 'var(--accent-color)' }}>
+                        <CheckCircle size={24} />
+                    </div>
+                    <div>
+                        <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '4px' }}>Approved</div>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)' }}>{stats.parsed || 0}</div>
+                    </div>
+                </div>
+
+                <div style={{ background: 'var(--card-bg)', borderRadius: '20px', padding: '1.5rem', display: 'flex', alignItems: 'center', gap: '1.25rem', border: '1px solid var(--border-color)', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}>
+                    <div style={{ padding: '0.75rem', background: 'rgba(231, 76, 60, 0.1)', borderRadius: '14px', color: '#e74c3c' }}>
+                        <AlertCircle size={24} />
+                    </div>
+                    <div>
+                        <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '4px' }}>Failed</div>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)' }}>{stats.failed || 0}</div>
+                    </div>
+                </div>
+
+                <div style={{ background: 'var(--card-bg)', borderRadius: '20px', padding: '1.5rem', display: 'flex', alignItems: 'center', gap: '1.25rem', border: '1px solid var(--border-color)', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}>
+                    <div style={{ padding: '0.75rem', background: 'rgba(243, 156, 18, 0.1)', borderRadius: '14px', color: '#f39c12' }}>
+                        <Clock size={24} />
+                    </div>
+                    <div>
+                        <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '4px' }}>Pending Approval</div>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)' }}>{stats.pending_review || 0}</div>
+                    </div>
+                </div>
             </div>
 
-            {/* Sort Dropdown - Left Aligned */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', gap: '2rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', position: 'relative' }}>
-                    <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Sort:</span>
+            {/* Sort and Search Only */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', gap: '1.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', position: 'relative' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Sort:</span>
                     <div
                         style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.875rem', cursor: 'pointer', fontWeight: 700, color: 'var(--primary-action)' }}
                         onClick={() => setIsSortOpen(!isSortOpen)}

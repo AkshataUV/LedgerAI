@@ -370,20 +370,30 @@ async def get_document_status(document_id: int, user=Depends(get_current_user)):
 
 
 @router.get("/stats")
-async def get_document_stats(user=Depends(get_current_user)):
+async def get_document_stats(institution: Optional[str] = None, user=Depends(get_current_user)):
     user_id = user["user_id"]
     sb = get_client()
-    result = (
+    
+    select_str = "status"
+    if institution:
+        select_str = "status, statement_categories!inner(institution_name)"
+        
+    query = (
         sb.table("documents")
-        .select("status")
+        .select(select_str)
         .eq("user_id", user_id)
-        .execute()
     )
+    
+    if institution:
+        query = query.eq("statement_categories.institution_name", institution)
+        
+    result = query.execute()
     rows = result.data or []
     total = len(rows)
     parsed = sum(1 for r in rows if r["status"] == "APPROVE")
-    failed = sum(1 for r in rows if r["status"] == "FAILED")
-    pending_review = sum(1 for r in rows if r["status"] == "AWAITING_REVIEW")
+    failed = sum(1 for r in rows if r["status"] == "ERROR")
+    # All documents that are not approved and not failed are considered pending/in-progress
+    pending_review = total - parsed - failed
     return {"total": total, "parsed": parsed, "failed": failed, "pending_review": pending_review}
 
 
@@ -393,6 +403,8 @@ async def get_recent_documents(
     limit: int = 20,
     sort: str = "newest",
     search: Optional[str] = None,
+    status: Optional[str] = None,
+    institution: Optional[str] = None,
     user=Depends(get_current_user)
 ):
     user_id = user["user_id"]
@@ -412,6 +424,26 @@ async def get_recent_documents(
         )
         .eq("user_id", user_id)
     )
+
+    if status:
+        # Map frontend labels if needed, or assume they match DB status
+        # Common: DONE -> Approved (or APPROVE status internally?), 
+        # PENDING -> Pending approval, ERROR -> Failed
+        if status == "APPROVED":
+            query = query.eq("status", "APPROVE")
+        elif status == "PENDING":
+            query = query.eq("status", "DONE") # DONE means processing finished, ready for review
+        elif status == "FAILED":
+            query = query.eq("status", "ERROR")
+        elif status == "PROCESSING":
+             query = query.in_("status", ["PROCESSING", "IDENTIFIED", "EXTRACTING", "MAPPING"])
+
+    if institution:
+        # Filter by institution name in the joined table
+        # We need !inner to filter on foreign table column while still returning the data
+        # actually, a separate select or a join filter is needed.
+        # Simplest: find category_ids first if many-to-one, or just use PostgREST filter
+        query = query.filter("statement_categories.institution_name", "eq", institution)
 
     if search:
         # Step 1: Find matching statement_ids from statement_categories by institution_name
