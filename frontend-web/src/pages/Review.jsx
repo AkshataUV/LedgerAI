@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Check, Code, FileSearch, Building2, Cpu, Loader2, ChevronLeft, CheckCircle, Download, Link, ScrollText, Trash2, Plus, RotateCcw, AlertCircle, Info, X, Building, CreditCard, ChevronDown } from "lucide-react";
+import { Check, Code, FileSearch, Building2, Cpu, Loader2, ChevronLeft, CheckCircle, Download, Link, ScrollText, Trash2, Plus, Minus, RotateCcw, AlertCircle, Info, X, Building, CreditCard, ChevronDown } from "lucide-react";
 // import API from "../api/api";
 import API from "../api/api";
 import { useParsing } from "../context/ParsingContext";
@@ -567,8 +567,9 @@ export default function ReviewPage() {
                                                     style={{ padding: '0.5rem 1rem', textAlign: 'right', width: '120px', position: 'relative' }}
                                                     onClick={() => !isApproved && !tx.is_duplicate && setEditingCell({ parser: parserType, index: i, field: 'amount' })}
                                                 >
-                                                    <div className="amount-cell-review" style={{ cursor: (isApproved || tx.is_duplicate) ? 'default' : 'pointer', justifyContent: 'flex-end', width: '100%' }}>
-                                                        <span style={{ color: isDebit ? '#F87171' : '#e2e8f0', fontWeight: 600 }}>{isDebit ? `- ₹${amount}` : '--'}</span>
+                                                    <div className="amount-cell-review" style={{ cursor: (isApproved || tx.is_duplicate) ? 'default' : 'pointer', justifyContent: 'flex-end', width: '100%', gap: '4px' }}>
+                                                        {isDebit && <Minus size={12} style={{ color: '#F87171' }} />}
+                                                        <span style={{ color: isDebit ? '#F87171' : '#e2e8f0', fontWeight: 600 }}>{isDebit ? `₹${amount}` : '--'}</span>
                                                         {!isApproved && <span className="amount-edit-hint">✎</span>}
                                                     </div>
                                                 </td>
@@ -577,8 +578,9 @@ export default function ReviewPage() {
                                                     style={{ padding: '0.5rem 1rem', textAlign: 'right', width: '120px', position: 'relative' }}
                                                     onClick={() => !isApproved && !tx.is_duplicate && setEditingCell({ parser: parserType, index: i, field: 'amount' })}
                                                 >
-                                                    <div className="amount-cell-review" style={{ cursor: (isApproved || tx.is_duplicate) ? 'default' : 'pointer', justifyContent: 'flex-end', width: '100%' }}>
-                                                        <span style={{ color: !isDebit && amount > 0 ? '#34D399' : '#e2e8f0', fontWeight: 600 }}>{!isDebit && amount > 0 ? `+ ₹${amount}` : '--'}</span>
+                                                    <div className="amount-cell-review" style={{ cursor: (isApproved || tx.is_duplicate) ? 'default' : 'pointer', justifyContent: 'flex-end', width: '100%', gap: '4px' }}>
+                                                        {!isDebit && amount > 0 && <Plus size={12} style={{ color: '#34D399' }} />}
+                                                        <span style={{ color: !isDebit && amount > 0 ? '#34D399' : '#e2e8f0', fontWeight: 600 }}>{!isDebit && amount > 0 ? `₹${amount}` : '--'}</span>
                                                         {!isApproved && <span className="amount-edit-hint">✎</span>}
                                                     </div>
                                                 </td>
@@ -780,23 +782,90 @@ export default function ReviewPage() {
                 </div>
             )}
 
-            {/* Retry Info Callout */}
+            {/* Quick Stats Summary Section */}
             {!isApproved && (
                 <div style={{
-                    background: 'rgba(243, 156, 18, 0.08)',
-                    border: '1px solid rgba(243, 156, 18, 0.3)',
-                    borderRadius: '12px',
-                    padding: '0.75rem 1.25rem',
-                    marginBottom: '1.5rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.75rem',
-                    color: '#92400e',
-                    fontSize: '0.85rem',
-                    fontWeight: 500
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+                    gap: '1.25rem',
+                    marginBottom: '2rem'
                 }}>
-                    <Info size={18} />
-                    <span>Extracted <b>{activeParser === "CODE" ? editableCodeTxns.length : editableLlmTxns.length} transactions</b></span>
+                    {/* Card 1: Total */}
+                    <div className="stats-card">
+                        <div className="stats-icon" style={{ background: 'rgba(72, 62, 168, 0.1)', color: 'var(--primary-action)' }}>
+                            <ScrollText size={24} />
+                        </div>
+                        <div>
+                            <div className="stats-label">Total Transactions</div>
+                            <div className="stats-value">{(activeParser === "CODE" ? editableCodeTxns : editableLlmTxns).length}</div>
+                        </div>
+                    </div>
+
+                    {/* Card 2: Credits */}
+                    <div className="stats-card">
+                        <div className="stats-icon" style={{ background: '#def7ec', color: '#03543f' }}>
+                            <Plus size={24} />
+                        </div>
+                        <div>
+                            <div className="stats-label">Number of Credits (+)</div>
+                            <div className="stats-value" style={{ color: '#03543f' }}>
+                                {(activeParser === "CODE" ? editableCodeTxns : editableLlmTxns).filter(t => t.credit > 0).length}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Card 3: Debits */}
+                    <div className="stats-card">
+                        <div className="stats-icon" style={{ background: '#fdf2f2', color: '#9b1c1c' }}>
+                            <Minus size={24} /> 
+                        </div>
+                        <div>
+                            <div className="stats-label">Number of Debits (-)</div>
+                            <div className="stats-value" style={{ color: '#9b1c1c' }}>
+                                {(activeParser === "CODE" ? editableCodeTxns : editableLlmTxns).filter(t => t.debit > 0).length}
+                            </div>
+                        </div>
+                    </div>
+
+                    <style dangerouslySetInnerHTML={{ __html: `
+                        .stats-card {
+                            background: white;
+                            border: 1px solid var(--border-color);
+                            border-radius: 16px;
+                            padding: 1.25rem 1.5rem;
+                            display: flex;
+                            align-items: center;
+                            gap: 1.25rem;
+                            box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+                            transition: transform 0.2s, box-shadow 0.2s;
+                        }
+                        .stats-card:hover {
+                            transform: translateY(-2px);
+                            box-shadow: 0 8px 20px rgba(0,0,0,0.06);
+                        }
+                        .stats-icon {
+                            width: 56px;
+                            height: 56px;
+                            border-radius: 14px;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            flex-shrink: 0;
+                        }
+                        .stats-label {
+                            font-size: 0.75rem;
+                            font-weight: 700;
+                            color: var(--text-secondary);
+                            text-transform: uppercase;
+                            letter-spacing: 0.5px;
+                            margin-bottom: 4px;
+                        }
+                        .stats-value {
+                            font-size: 1.5rem;
+                            font-weight: 800;
+                            color: var(--text-primary);
+                        }
+                    `}} />
                 </div>
             )}
 

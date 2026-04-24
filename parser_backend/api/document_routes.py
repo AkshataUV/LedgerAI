@@ -388,28 +388,69 @@ async def get_document_stats(user=Depends(get_current_user)):
 
 
 @router.get("/recent")
-async def get_recent_documents(user=Depends(get_current_user)):
+async def get_recent_documents(
+    page: int = 1,
+    limit: int = 20,
+    sort: str = "newest",
+    search: Optional[str] = None,
+    user=Depends(get_current_user)
+):
     user_id = user["user_id"]
     sb = get_client()
-    result = (
+    
+    # Calculate range
+    start = (page - 1) * limit
+    end = start + limit - 1
+    
+    # Base query for data
+    query = (
         sb.table("documents")
         .select(
             "document_id, file_name, status, transaction_parsed_type, created_at, "
-            "statement_categories(institution_name, logic_version)"
+            "statement_categories(institution_name, logic_version)",
+            count="exact"
         )
         .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .limit(20)
-        .execute()
     )
+
+    if search:
+        # Step 1: Find matching statement_ids from statement_categories by institution_name
+        cat_res = sb.table("statement_categories").select("statement_id").ilike("institution_name", f"%{search}%").execute()
+        matched_ids = [str(r["statement_id"]) for r in (cat_res.data or [])]
+        
+        # Step 2: Build the OR filter for the documents table
+        # We search file_name ILIKE search OR statement_id IN matched_ids
+        or_conditions = [f"file_name.ilike.*{search}*"]
+        if matched_ids:
+            ids_list = ",".join(matched_ids)
+            or_conditions.append(f"statement_id.in.({ids_list})")
+        
+        query = query.or_(",".join(or_conditions))
+
+    # Apply sorting
+    if sort == "oldest":
+        query = query.order("created_at", desc=False)
+    elif sort == "alpha":
+        query = query.order("file_name", desc=False)
+    else: # newest first
+        query = query.order("created_at", desc=True)
+
+    result = query.range(start, end).execute()
+    
     # Flatten the nested statement_categories join
     rows = []
     for r in (result.data or []):
         cat = r.pop("statement_categories", None) or {}
+        if isinstance(cat, list) and len(cat) > 0:
+            cat = cat[0]
         r["institution_name"] = cat.get("institution_name")
         r["logic_version"] = cat.get("logic_version", 1)
         rows.append(r)
-    return rows
+    
+    return {
+        "data": rows,
+        "total": result.count or 0
+    }
 
 
 @router.get("/{document_id}/review")

@@ -170,31 +170,54 @@ export const ParsingProvider = ({ children }) => {
 
 const NotificationPortal = ({ notification, onClose }) => {
     const navigate = useNavigate();
+    
+    useEffect(() => {
+        if (!notification) return;
+        
+        // Auto-dismiss after 4 seconds
+        const timer = setTimeout(() => {
+            onClose();
+        }, 4000);
+        
+        return () => clearTimeout(timer);
+    }, [notification, onClose]);
+
     if (!notification) return null;
 
+    const handleAction = () => {
+        if (notification.type === 'success' && notification.docId) {
+            navigate(`/review/${notification.docId}`);
+        }
+        onClose();
+    };
+
     return (
-        <div style={{
-            position: 'fixed',
-            top: '24px',
-            right: '24px',
-            zIndex: 9999,
-            width: '360px',
-            animation: 'slideIn 0.4s ease-out'
-        }}>
+        <div 
+            onClick={handleAction}
+            style={{
+                position: 'fixed',
+                top: '24px',
+                right: '24px',
+                zIndex: 9999,
+                width: '360px',
+                animation: 'slideIn 0.4s ease-out',
+                cursor: 'pointer'
+            }}
+        >
             <div style={{
-                background: 'var(--bg-secondary, rgba(255, 255, 255, 0.85))',
+                background: 'var(--bg-secondary, rgba(255, 255, 255, 0.95))',
                 backdropFilter: 'blur(12px)',
                 borderRadius: '16px',
-                border: `1px solid ${notification.type === 'success' ? 'rgba(39, 174, 96, 0.2)' : 'rgba(231, 76, 60, 0.2)'}`,
+                border: `1px solid ${notification.type === 'success' ? '#27ae6033' : '#e74c3c33'}`,
                 boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
                 padding: '1.25rem',
                 display: 'flex',
                 gap: '1rem',
-                alignItems: 'flex-start'
+                alignItems: 'center'
             }}>
                 <div style={{
-                    width: '32px',
-                    height: '32px',
+                    width: '40px',
+                    height: '40px',
                     borderRadius: '50%',
                     background: notification.type === 'success' ? '#def7ec' : '#fde8e8',
                     display: 'flex',
@@ -207,35 +230,11 @@ const NotificationPortal = ({ notification, onClose }) => {
                     </span>
                 </div>
                 <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--text-primary, #1e1b4b)', marginBottom: '4px' }}>
+                    <div style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--text-primary, #1e1b4b)', marginBottom: '2px' }}>
                         {notification.title}
                     </div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #6b7280)', lineHeight: 1.4, marginBottom: '0.75rem' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #6b7280)', lineHeight: 1.4 }}>
                         {notification.message}
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        {notification.type === 'success' && (
-                            <button
-                                onClick={onClose}
-                                style={{
-                                    background: '#483EA8', color: '#fff', border: 'none',
-                                    padding: '6px 16px', borderRadius: '6px', fontSize: '0.75rem',
-                                    fontWeight: 700, cursor: 'pointer'
-                                }}
-                            >
-                                OK
-                            </button>
-                        )}
-                        <button
-                            onClick={onClose}
-                            style={{
-                                background: 'transparent', color: 'var(--text-secondary, #9ca3af)', border: '1px solid var(--border-color, #e5e7eb)',
-                                padding: '6px 16px', borderRadius: '6px', fontSize: '0.75rem',
-                                fontWeight: 700, cursor: 'pointer'
-                            }}
-                        >
-                            Close
-                        </button>
                     </div>
                 </div>
             </div>

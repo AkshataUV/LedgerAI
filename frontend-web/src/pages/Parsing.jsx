@@ -27,9 +27,26 @@ function CircularProgress({ processingStatus, status, elapsedSeconds, parsedType
         currentKey = "PARSING_TRANSACTIONS_CODE";
     }
     const meta = STAGE_META[currentKey] || STAGE_META["PROCESSING"];
-    const r = 54;
-    const circ = 2 * Math.PI * r;
-    const offset = circ - (meta.pct / 100) * circ;
+    
+    // Simulate a sub-process percentage that climbs but never hits 100% prematurely
+    const [subPct, setSubPct] = useState(0);
+    
+    useEffect(() => {
+        setSubPct(0);
+        let current = 0;
+        const speed = currentKey === "PARSING_TRANSACTIONS" ? 1500 : 800; // Slower for heavy tasks
+        
+        const interval = setInterval(() => {
+            setSubPct(prev => {
+                // Logarithmic-style growth: the closer to 100, the slower it gets
+                const remaining = 100 - prev;
+                const increment = Math.max(0.1, remaining / 15);
+                const next = prev + increment;
+                return next > 98.5 ? 98.5 : next; // Cap at 98.5% until status changes
+            });
+        }, speed);
+        return () => clearInterval(interval);
+    }, [currentKey]);
 
     return (
         <div style={{
@@ -54,12 +71,17 @@ function CircularProgress({ processingStatus, status, elapsedSeconds, parsedType
                     />
                 </svg>
                 <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-                    <span style={{ fontSize: "1.1rem", fontWeight: 800, color: meta.color }}>{meta.pct}%</span>
+                    <span style={{ fontSize: "1.1rem", fontWeight: 800, color: "var(--text-primary)" }}>{meta.pct}%</span>
                 </div>
             </div>
             <div style={{ textAlign: "center" }}>
                 <div style={{ fontSize: "0.9rem", fontWeight: 800, color: "var(--text-primary)" }}>{meta.label}</div>
-                <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", maxWidth: 240 }}>{meta.sub}</div>
+                <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", maxWidth: 280 }}>
+                    <span style={{ fontWeight: 700, color: "var(--primary-action)", marginRight: '4px' }}>
+                        ({Math.round(subPct)}% completed)
+                    </span> 
+                    {meta.sub}
+                </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.7rem", color: "var(--text-secondary)" }}>
                 <Clock size={12} /> {elapsedSeconds}s elapsed
@@ -89,29 +111,51 @@ export default function ParsingPage() {
     const [deleteTarget, setDeleteTarget] = useState(null);
     const [isDeleting, setIsDeleting] = useState(false);
 
+    // Pagination State
+    const [currentPage, setCurrentPage] = useState(1);
+    const [pageSize] = useState(15);
+    const [totalResults, setTotalResults] = useState(0);
+    const [searchTerm, setSearchTerm] = useState("");
+    const totalPages = Math.ceil((totalResults || 0) / pageSize);
+
 
 
     const sortOptions = ["Newest first", "Oldest first", "Last activity", "Alphabetically"];
 
     useEffect(() => {
-        fetchData();
-    }, []);
+        const timer = setTimeout(() => {
+            fetchData(currentPage);
+        }, 300); // 300ms debounce
+        return () => clearTimeout(timer);
+    }, [currentPage, sortOption, searchTerm]);
 
     useEffect(() => {
         if (!isExtracting && activeDoc?.status === "DONE") {
-            fetchData();
+            fetchData(currentPage);
         }
     }, [isExtracting, activeDoc]);
 
-    const fetchData = async () => {
+    const fetchData = async (page = 1) => {
         setIsLoading(true);
         try {
+            let sortParam = "newest";
+            if (sortOption === "Oldest first") sortParam = "oldest";
+            if (sortOption === "Alphabetically") sortParam = "alpha";
+
             const [statsRes, recentRes] = await Promise.all([
                 API.get("/documents/stats"),
-                API.get("/documents/recent")
+                API.get("/documents/recent", { 
+                    params: { 
+                        page, 
+                        limit: pageSize,
+                        sort: sortParam,
+                        search: searchTerm || undefined
+                    } 
+                })
             ]);
             setStats(statsRes.data);
-            setRecentDocs(recentRes.data);
+            setRecentDocs(recentRes.data.data);
+            setTotalResults(recentRes.data.total);
         } catch (err) {
             console.error("Failed to fetch dashboard data", err);
         } finally {
@@ -121,12 +165,11 @@ export default function ParsingPage() {
 
 
 
-    const sortedDocs = [...recentDocs].sort((a, b) => {
-        if (sortOption === "Newest first") return new Date(b.created_at) - new Date(a.created_at);
-        if (sortOption === "Oldest first") return new Date(a.created_at) - new Date(b.created_at);
-        if (sortOption === "Alphabetically") return a.file_name.localeCompare(b.file_name);
-        return 0;
-    });
+    const handleSortChange = (opt) => {
+        setSortOption(opt);
+        setCurrentPage(1); // Reset to first page on sort change
+        setIsSortOpen(false);
+    };
 
     const handleDeleteDocument = (docId, fileName) => {
         setDeleteTarget({ id: docId, name: fileName });
@@ -388,7 +431,7 @@ export default function ParsingPage() {
             </div>
 
             {/* Sort Dropdown - Left Aligned */}
-            <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', gap: '2rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', position: 'relative' }}>
                     <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Sort:</span>
                     <div
@@ -414,7 +457,7 @@ export default function ParsingPage() {
                             {sortOptions.map(opt => (
                                 <div
                                     key={opt}
-                                    onClick={() => { setSortOption(opt); setIsSortOpen(false); }}
+                                    onClick={() => handleSortChange(opt)}
                                     style={{
                                         padding: '0.6rem 1rem',
                                         fontSize: '0.8rem',
@@ -430,13 +473,36 @@ export default function ParsingPage() {
                         </div>
                     )}
                 </div>
+
+                <div style={{ position: 'relative', flex: 1, maxWidth: '400px' }}>
+                    <Search style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} size={16} />
+                    <input
+                        type="text"
+                        placeholder="Search by bank or filename..."
+                        value={searchTerm}
+                        onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+                        style={{
+                            width: '100%',
+                            padding: '0.6rem 1rem 0.6rem 2.5rem',
+                            borderRadius: '10px',
+                            border: '1px solid var(--border-color)',
+                            background: 'var(--bg-primary)',
+                            fontSize: '0.875rem',
+                            color: 'var(--text-primary)',
+                            outline: 'none',
+                            transition: 'all 0.2s'
+                        }}
+                        onFocus={(e) => e.target.style.borderColor = 'var(--primary-action)'}
+                        onBlur={(e) => e.target.style.borderColor = 'var(--border-color)'}
+                    />
+                </div>
             </div>
 
             <div style={{ background: 'var(--bg-secondary)', borderRadius: '16px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead><tr style={{ background: 'var(--bg-primary)', fontSize: '0.75rem', color: 'var(--text-secondary)' }}><th style={{ padding: '1rem 2rem', textAlign: 'left' }}>File Name</th><th style={{ padding: '1rem' }}>Status</th><th style={{ padding: '1rem' }}>Type</th><th style={{ padding: '1rem' }}>Activity</th><th style={{ padding: '1rem 2rem' }}>Actions</th></tr></thead>
                     <tbody>
-                        {isLoading ? <tr><td colSpan="5" style={{ textAlign: 'center', padding: '2rem' }}><Loader2 className="spin-icon" size={24} color="#483EA8" /></td></tr> : sortedDocs.map(doc => (
+                        {isLoading ? <tr><td colSpan="5" style={{ textAlign: 'center', padding: '2rem' }}><Loader2 className="spin-icon" size={24} color="#483EA8" /></td></tr> : recentDocs.map(doc => (
                             <tr key={doc.document_id} style={{ borderTop: '1px solid var(--border-color)', fontSize: '0.9rem' }}>
                                 <td style={{ padding: '1rem 2rem' }}><div><b>{doc.file_name}</b></div><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{doc.institution_name || 'Generic PDF'}</div></td>
                                 <td style={{ textAlign: 'center' }}>
@@ -514,6 +580,94 @@ export default function ParsingPage() {
                     </tbody>
                 </table>
             </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+                <div style={{
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    marginTop: '2rem',
+                    marginBottom: '2rem'
+                }}>
+                    <button
+                        disabled={currentPage === 1 || isLoading}
+                        onClick={() => setCurrentPage(prev => prev - 1)}
+                        style={{
+                            padding: '8px 16px',
+                            borderRadius: '8px',
+                            border: '1px solid var(--border-color)',
+                            background: 'var(--bg-secondary)',
+                            color: currentPage === 1 ? 'var(--text-secondary)' : 'var(--primary-action)',
+                            fontWeight: 700,
+                            cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
+                            opacity: currentPage === 1 ? 0.5 : 1,
+                            transition: 'all 0.2s',
+                            fontSize: '0.8rem'
+                        }}
+                    >
+                        Previous
+                    </button>
+
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                        {[...Array(totalPages)].map((_, i) => {
+                            const p = i + 1;
+                            // Basic pagination logic: show first, last, and around current
+                            if (
+                                p === 1 || 
+                                p === totalPages || 
+                                (p >= currentPage - 1 && p <= currentPage + 1)
+                            ) {
+                                return (
+                                    <button
+                                        key={p}
+                                        onClick={() => setCurrentPage(p)}
+                                        style={{
+                                            width: '36px',
+                                            height: '36px',
+                                            borderRadius: '8px',
+                                            border: '1px solid var(--border-color)',
+                                            background: currentPage === p ? 'var(--primary-action)' : 'var(--bg-secondary)',
+                                            color: currentPage === p ? 'white' : 'var(--text-primary)',
+                                            fontWeight: 700,
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s'
+                                        }}
+                                    >
+                                        {p}
+                                    </button>
+                                );
+                            } else if (
+                                (p === 2 && currentPage > 3) || 
+                                (p === totalPages - 1 && currentPage < totalPages - 2)
+                            ) {
+                                return <span key={p} style={{ padding: '8px', color: 'var(--text-secondary)' }}>...</span>;
+                            }
+                            return null;
+                        })}
+                    </div>
+
+                    <button
+                        disabled={currentPage === totalPages || isLoading}
+                        onClick={() => setCurrentPage(prev => prev + 1)}
+                        style={{
+                            padding: '8px 16px',
+                            borderRadius: '8px',
+                            border: '1px solid var(--border-color)',
+                            background: 'var(--bg-secondary)',
+                            color: currentPage === totalPages ? 'var(--text-secondary)' : 'var(--primary-action)',
+                            fontWeight: 700,
+                            cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
+                            opacity: currentPage === totalPages ? 0.5 : 1,
+                            transition: 'all 0.2s',
+                            fontSize: '0.8rem'
+                        }}
+                    >
+                        Next
+                    </button>
+                </div>
+            )}
 
             {/* Custom Styled Delete Confirmation Modal */}
             {deleteTarget && (

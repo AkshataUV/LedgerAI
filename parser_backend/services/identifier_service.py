@@ -22,27 +22,66 @@ _LEGAL_SUFFIX_RE = re.compile(
 )
 
 
+_COMMON_ABBREVIATIONS = {
+    "BOI": "BANK OF INDIA",
+    "SBI": "STATE BANK OF INDIA",
+    "HDFC": "HDFC BANK",
+    "ICICI": "ICICI BANK",
+    "AXIS": "AXIS BANK",
+    "TJSB": "TJSB SAHAKARI BANK",
+}
+
+
 def normalise_institution_name(raw: str) -> str:
     """
-    Strip trailing legal registration suffixes and handle common prefixes.
+    Strip trailing legal registration suffixes, bracketed text, and punctuation.
     Returns UPPERCASE.
-    Example: "The Federal Bank Ltd." -> "FEDERAL BANK"
+    Example: "TJSB (Thane Janata Sahakari Bank)" -> "TJSB SAHAKARI BANK"
     """
     if not raw or not raw.strip():
         return "UNKNOWN"
     
+    # 1. Basic cleaning: uppercase and strip
     name = raw.strip().upper()
     
-    # Strip common leading articles like "THE "
+    # 2. Remove bracketed content (often contains abbreviations or full names)
+    # e.g., "BANK OF BARODA (BOB)" -> "BANK OF BARODA"
+    # e.g., "TJSB (THANE JANATA SAHAKARI BANK)" -> "TJSB"
+    # We try to keep the part OUTSIDE the brackets if possible.
+    if "(" in name and ")" in name:
+        parts = re.split(r"[\(\)]", name)
+        # Find the most "meaningful" part (longest or specifically TJSB)
+        meaningful_parts = [p.strip() for p in parts if p.strip()]
+        if meaningful_parts:
+            # If any part is "TJSB", prefer that
+            if any("TJSB" in p for p in meaningful_parts):
+                name = "TJSB"
+            else:
+                name = meaningful_parts[0]
+
+    # 3. Handle common abbreviations / synonyms
+    # We do this BEFORE stripping legal suffixes to catch "SBI LTD"
+    if name in _COMMON_ABBREVIATIONS:
+        return _COMMON_ABBREVIATIONS[name]
+    
+    # Also check if any abbreviation is PART of the name
+    for abbr, full in _COMMON_ABBREVIATIONS.items():
+        if name == abbr or name == full:
+            return full
+
+    # 4. Strip common leading articles like "THE "
     if name.startswith("THE "):
         name = name[4:].strip()
         
-    # Strip trailing legal registration suffixes (Limited, Ltd, etc.)
+    # 5. Strip trailing legal registration suffixes (Limited, Ltd, etc.)
     prev = None
     while prev != name:
         prev = name
-        # We use the regex on the upper-cased name
         name = _LEGAL_SUFFIX_RE.sub("", name).strip().rstrip(",").strip()
+        
+    # 6. Final check against abbreviations after stripping
+    if name in _COMMON_ABBREVIATIONS:
+        return _COMMON_ABBREVIATIONS[name]
         
     return name
 
@@ -74,103 +113,46 @@ def _get_first_pages_text(pages: List[str], max_pages: int = 3) -> str:
 # Own function — does not reuse any existing service function
 # ════════════════════════════════════════════════════════════
 
-def _get_table_columns_fingerprint(identifier_json: dict) -> str:
-    """
-    Build a stable, order-independent fingerprint from the
-    table_header_markers inside the identification JSON.
-
-    Same columns regardless of order → same fingerprint → dedup hit.
-    Different columns → different fingerprint → treat as a new format.
-
-    Example:
-      ["Date", "Particulars", "Debit", "Credit", "Balance"]
-      → "balance|credit|date|debit|particulars"
-    """
+def _get_column_set(identifier_json: dict) -> set:
+    """Extract a set of normalised column names."""
     headers = (
         identifier_json
         .get("identity_markers", {})
         .get("transaction_table_identity", {})
         .get("table_header_markers", [])
     )
-    normalised = sorted(
-        re.sub(r"\s+", "", h.lower())
+    return {
+        re.sub(r"\s+", "", str(h).lower())
         for h in headers
-        if isinstance(h, str) and h.strip()
-    )
-    return "|".join(normalised)
-
-
-def _format_name_token_similarity(name_a: str, name_b: str) -> float:
-    """
-    Jaccard token-overlap similarity between two format name strings.
-    Strips the trailing version suffix (_V\\d+), lowercases, and splits
-    on underscores / spaces before comparing.
-
-    Returns 0.0–1.0.  1.0 = identical token sets.
-
-    Why this prevents the SAVINGS vs INSTANTSAVINGS false-dedup bug:
-      "BANK_STATEMENT_HDFC_SAVINGS_V1"
-        vs "BANK_STATEMENT_HDFC_INSTANTSAVINGS_V1"
-        tokens_a = {bank, statement, hdfc, savings}
-        tokens_b = {bank, statement, hdfc, instantsavings}
-        intersection = {bank, statement, hdfc}   → 3
-        union        = {bank, statement, hdfc, savings, instantsavings} → 5
-        similarity   = 3/5 = 0.60  → below default threshold 0.65 → NOT a match
-
-      "BANK_STATEMENT_HDFC_SAVINGS_V1"
-        vs "BANK_STATEMENT_HDFC_SAVINGS_V1"
-        similarity = 1.0  → match
-    """
-    def _tokenise(name: str) -> set:
-        s = re.sub(r"[_\s]v\d+$", "", name.strip(), flags=re.IGNORECASE)
-        return set(re.split(r"[_\s]+", s.lower())) - {""}
-
-    tokens_a = _tokenise(name_a)
-    tokens_b = _tokenise(name_b)
-    if not tokens_a or not tokens_b:
-        return 0.0
-    intersection = tokens_a & tokens_b
-    union        = tokens_a | tokens_b
-    return len(intersection) / len(union)
+        if h and str(h).strip()
+    }
 
 
 def check_format_exists(
-    new_identifier_json: dict,
-    format_name_similarity_threshold: float = 0.65,
+    new_id_json: dict,
+    col_similarity_threshold: float = 0.80,
 ) -> Optional[Dict]:
     """
-    Check whether a format equivalent to `new_identifier_json` already
-    exists in the statement_categories table.
+    Check if an equivalent format exists in the database using Multi-Signal matching.
 
-    All THREE criteria must match for a dedup hit:
-      1. institution_name  — normalised exact match
-      2. format_name       — Jaccard token similarity
-                             >= format_name_similarity_threshold
-      3. table columns     — column fingerprint exact match
+    Signals for a Match (OR logic):
+    1. Perfect Column Fingerprint Match
+    2. Overlap Hit: Same Institution + (80% Column Overlap OR Same IFSC OR Same Title Phrase)
 
-    Returns the matching statement_categories row dict, or None.
-
-    Does NOT call find_existing_identifier or any other service function.
-    Reads the DB directly via get_all_matchable_formats.
+    Returns the matching row dict, or None.
     """
-    # Normalise institution name from the new document
-    raw_inst      = new_identifier_json.get("institution_name") or ""
+    raw_inst      = new_id_json.get("institution_name") or ""
     new_norm_inst = normalise_institution_name(raw_inst)
 
     if not new_norm_inst or new_norm_inst == "UNKNOWN":
-        logger.debug("check_format_exists: institution unknown — skip")
         return None
 
-    # Column fingerprint for the new document
-    new_col_fp = _get_table_columns_fingerprint(new_identifier_json)
-    if not new_col_fp:
-        logger.debug("check_format_exists: no table columns in new doc — skip")
-        return None
+    # Signals from the new document
+    new_cols      = _get_column_set(new_id_json)
+    new_ifsc      = new_id_json.get("identity_markers", {}).get("issuer_identity", {}).get("regulatory_identifiers", {}).get("ifsc", {}).get("pattern")
+    new_title     = str(new_id_json.get("identity_markers", {}).get("document_structure_identity", {}).get("document_title_phrase", {}).get("patterns", [""])[0]).lower().strip()
+    new_format_id = new_id_json.get("id") or ""
 
-    # Format name from the LLM-generated "id" field
-    new_format_name = new_identifier_json.get("id") or ""
-
-    # Fetch all stored formats from DB
     try:
         all_rows: List[Dict] = get_all_matchable_formats()
     except Exception as exc:
@@ -178,54 +160,39 @@ def check_format_exists(
         return None
 
     for row in all_rows:
-
-        # ── 1. Institution match ──────────────────────────────────────────────
-        stored_raw_inst  = row.get("institution_name") or ""
-        stored_norm_inst = normalise_institution_name(stored_raw_inst)
+        # ── 1. Institution must match first ───────────────────────────────────
+        stored_norm_inst = normalise_institution_name(row.get("institution_name") or "")
         if stored_norm_inst != new_norm_inst:
             continue
 
-        # ── 2. Format name similarity ─────────────────────────────────────────
-        stored_format_name = row.get("format_name") or ""
-        sim = _format_name_token_similarity(stored_format_name, new_format_name)
-        if sim < format_name_similarity_threshold:
-            logger.debug(
-                "check_format_exists: fmt_sim=%.2f < %.2f "
-                "('%s' vs '%s') — skip",
-                sim, format_name_similarity_threshold,
-                stored_format_name, new_format_name,
+        # Parse stored JSON
+        stored_json = row.get("statement_identifier", {})
+        if isinstance(stored_json, str):
+            try: stored_json = json.loads(stored_json)
+            except: continue
+
+        # ── 2. Structural Signals ─────────────────────────────────────────────
+        stored_cols = _get_column_set(stored_json)
+        
+        # Calculate Overlap (Jaccard-ish)
+        if not new_cols or not stored_cols:
+            intersection_ratio = 0
+        else:
+            intersection = new_cols.intersection(stored_cols)
+            union        = new_cols.union(stored_cols)
+            intersection_ratio = len(intersection) / len(union)
+
+        # ── 3. Decision ───────────────────────────────────────────────────────
+        is_hit = (intersection_ratio >= col_similarity_threshold)
+
+        if is_hit:
+            logger.info(
+                "check_format_exists: HIT — statement_id=%s (column_overlap=%.2f)",
+                row.get("statement_id"), intersection_ratio
             )
-            continue
+            return row
 
-        # ── 3. Table column fingerprint ───────────────────────────────────────
-        stored_id_json = row.get("statement_identifier", {})
-        if isinstance(stored_id_json, str):
-            try:
-                stored_id_json = json.loads(stored_id_json)
-            except Exception:
-                continue
-
-        stored_col_fp = _get_table_columns_fingerprint(stored_id_json)
-        if stored_col_fp != new_col_fp:
-            logger.debug(
-                "check_format_exists: column mismatch for statement_id=%s "
-                "(stored='%s' | new='%s') — skip",
-                row.get("statement_id"), stored_col_fp, new_col_fp,
-            )
-            continue
-
-        # All three matched
-        logger.info(
-            "check_format_exists: HIT — statement_id=%s "
-            "(institution='%s'  fmt_sim=%.2f  columns='%s')",
-            row.get("statement_id"), new_norm_inst, sim, new_col_fp,
-        )
-        return row
-
-    logger.info(
-        "check_format_exists: no match for institution='%s' format='%s'",
-        new_norm_inst, new_format_name,
-    )
+    logger.info("check_format_exists: NO match for institution='%s' with overlap threshold %.2f", new_norm_inst, col_similarity_threshold)
     return None
 
 
@@ -260,9 +227,13 @@ ANALYSIS WORKFLOW
 ══════════════════════════════════════════════════════════════════════════════
 
 STEP 1: DOCUMENT CLASSIFICATION
+- Identify the issuing institution name. 
+  CRITICAL: Prioritize the document header, footer, logo area, and official contact sections. 
+  CAUTION: Many Indian bank statements (like TJSB, Federal, etc.) have minimal headers. Look for bank names in branch addresses or copyright notes. 
+  HINT: The concatenated string "SavingAccountStatement" (no spaces) is a strong marker for TJSB (Thane Janata Sahakari Bank).
+  WARNING: DO NOT assume a bank mentioned in a single transaction (e.g., "BOI EMI", "BKID", "HDFC UPI") is the issuer if it appears in the description/narration column. These are almost always counterparties.
 - Identify the document family: BANK_STATEMENT | CREDIT_CARD | WALLET | LOAN | INVESTMENT | INSURANCE | TAX | OTHER
 - Identify the document subtype: Savings, Current, Platinum Card, Gold Card, Mutual Fund, Demat, etc.
-- Identify the issuing institution name
 - Assign confidence score (0.0-1.0) based on clarity of identification
 
 STEP 2: EXTRACT ISSUER IDENTITY MARKERS
@@ -515,7 +486,20 @@ Analyze this financial statement and generate identification markers:
 
     # ── Normalise institution_name ────────────────────────────────────────────
     raw_inst = identifier.get("institution_name") or "Unknown"
-    identifier["institution_name"] = normalise_institution_name(raw_inst)
+    norm_inst = normalise_institution_name(raw_inst)
+
+    # ── Heuristic Fallback for TJSB ───────────────────────────────────────────
+    # TJSB statements often have no bank name in text, only a logo.
+    # The concatenated string "SavingAccountStatement" or "TJSB" in text are markers.
+    if norm_inst == "UNKNOWN":
+        header_text = "\n".join(pages[:2]).lower().replace(" ", "")
+        if "savingaccountstatement" in header_text or "tjsb" in header_text:
+            logger.info("classify_document_llm: TJSB heuristic match triggered")
+            norm_inst = "TJSB SAHAKARI BANK"
+            if identifier.get("id"):
+                identifier["id"] = identifier["id"].replace("UNKNOWN", "TJSB")
+
+    identifier["institution_name"] = norm_inst
 
     logger.info(
         "classify_document_llm: family=%s  institution=%s (raw=%r)  "

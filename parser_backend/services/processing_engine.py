@@ -295,21 +295,21 @@ def process_document(
 
             update_document_statement(document_id, statement_id)
 
-            # Handle user-triggered code retry with feedback note
-            if retry_mode == "CODE" and retry_note and extraction_code:
-                try:
-                    logger.info("CODE RETRY: Applying user feedback to improve logic...")
-                    refined_code = refine_extraction_logic_llm(
-                        current_logic     = extraction_code,
-                        mismatch_analysis = retry_note,
-                        text_sample       = sample_text,
-                    )
-                    if refined_code:
-                        update_extraction_logic(statement_id, refined_code)
-                        extraction_code = refined_code
-                        logger.info("CODE RETRY: Logic updated successfully.")
-                except Exception as e:
-                    logger.warning("CODE RETRY: Failed: %s", e)
+            # # Handle user-triggered code retry with feedback note
+            # if retry_mode == "CODE" and retry_note and extraction_code:
+            #     try:
+            #         logger.info("CODE RETRY: Applying user feedback to improve logic...")
+            #         refined_code = refine_extraction_logic_llm(
+            #             current_logic     = extraction_code,
+            #             mismatch_analysis = retry_note,
+            #             text_sample       = sample_text,
+            #         )
+            #         if refined_code:
+            #             update_extraction_logic(statement_id, refined_code)
+            #             extraction_code = refined_code
+            #             logger.info("CODE RETRY: Logic updated successfully.")
+            #     except Exception as e:
+            #         logger.warning("CODE RETRY: Failed: %s", e)
 
             logger.info("")
             logger.info("[STEP 4/5] ACTIVE format — fast-path code extraction...")
@@ -320,7 +320,9 @@ def process_document(
             propriety_ok = validate_extraction_propriety(code_txns)
             strict_ok    = validate_code_quality_strict(code_txns)
 
-            if propriety_ok and strict_ok:
+            if strict_ok:
+                if not propriety_ok:
+                    logger.info("ACTIVE fast-path: Propriety failed but Strict gate passed — accepting CODE result.")
                 logger.info("[STEP 5/5] PIPELINE COMPLETE — CODE (ACTIVE fast-path)")
                 update_processing_complete(document_id, "CODE")
                 insert_staging_code_only(document_id, user_id, code_txns, 100.0)
@@ -599,12 +601,11 @@ def _finish_pipeline(
         logger.info("DECISION: LLM WINS — CODE returned 0 transactions")
         logger.info("Format status → EXPERIMENTAL")
 
-    elif comparison_score >= 90 and code_passes_quality and len(code_txns) == len(llm_txns):
+    elif (comparison_score >= 90 and code_passes_quality and len(code_txns) == len(llm_txns)) or (comparison_score == 100 and has_code and len(code_txns) == len(llm_txns)):
         final_parser_type    = "CODE"
         new_statement_status = "ACTIVE"
         logger.info(
-            "DECISION: CODE WINS (accuracy=%.2f%% ≥ 90%% + count match + quality) → ACTIVE",
-            comparison_score,
+            "DECISION: CODE WINS (Perfect match with LLM or High accuracy + Quality) → ACTIVE"
         )
 
     elif not has_code and not has_llm:

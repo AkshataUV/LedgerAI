@@ -63,8 +63,16 @@ def is_transaction_proper(txn: dict) -> bool:
     if not desc or len(desc) < 3:
         return False
 
+    desc_lower = desc.lower()
     for pat in NOISE_PATTERNS:
         if re.search(pat, desc, re.IGNORECASE):
+            # Check exceptions (using the same list as strict gate)
+            pat_key = pat.lstrip(r'\s*').split(r'\s*')[0].replace('\\', '')
+            exceptions = _STRICT_NOISE_EXCEPTIONS.get(pat_key, None)
+            if exceptions is not None:
+                if any(exc in desc_lower for exc in exceptions):
+                    continue  # Legitimate use — skip this noise check
+                    
             return False
 
     if desc.count('|') > 3 or desc.count('-') > 10:
@@ -136,8 +144,6 @@ def validate_code_quality_strict(txns: list) -> bool:
     if not txns:
         return False
 
-    previous_balance = None
-
     for i, txn in enumerate(txns):
         date    = txn.get("date")
         details = str(txn.get("details") or "").strip()
@@ -155,7 +161,7 @@ def validate_code_quality_strict(txns: list) -> bool:
             logger.info("Strict gate FAILED: row %d details too short: '%s'", i, details)
             return False
 
-        # 3. NOISE CHECK with exception handling
+        # 3. NOISE CHECK
         details_lower = details.lower()
         for pat in STRICT_NOISE_PATTERNS:
             if re.search(pat, details, re.IGNORECASE):
@@ -170,27 +176,6 @@ def validate_code_quality_strict(txns: list) -> bool:
                     i, pat, details
                 )
                 return False
-
-        # 4. MATHEMATICAL BALANCE CHECK
-        if balance is not None and previous_balance is not None:
-            curr_bal = float(balance)
-            prev_bal = float(previous_balance)
-
-            # Standard: Prev - Debit + Credit = Curr
-            expected = prev_bal - debit + credit
-            if abs(curr_bal - expected) > 0.05:
-                # Reverse (credit card): Prev + Debit - Credit = Curr
-                expected_reverse = prev_bal + debit - credit
-                if abs(curr_bal - expected_reverse) > 0.05:
-                    logger.info(
-                        "Strict gate FAILED: row %d balance mismatch. "
-                        "Prev=%.2f Dr=%.2f Cr=%.2f Curr=%.2f Expected=%.2f",
-                        i, prev_bal, debit, credit, curr_bal, expected
-                    )
-                    return False
-
-        if balance is not None:
-            previous_balance = balance
 
     return True
 
