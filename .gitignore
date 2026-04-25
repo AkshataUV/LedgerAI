@@ -28,3 +28,9 @@ Thumbs.db
 .ledgerai_pids
 
 .claude/
+
+# Ignore PDFs (e.g. bank statements)
+*.pdf
+
+# Ignore classification results
+classification_results.json
